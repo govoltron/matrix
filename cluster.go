@@ -32,7 +32,6 @@ var (
 type Endpoint struct {
 	ID   string `json:"id,omitempty"`
 	Addr string `json:"addr,omitempty"`
-	Desc string `json:"desc,omitempty"`
 	Time int64  `json:"time,omitempty"`
 }
 

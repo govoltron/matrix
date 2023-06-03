@@ -21,6 +21,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -311,7 +313,12 @@ func (a *Agent) deleteRemote(uniqueID string) {
 
 // isValidAddr
 func isValidAddr(addr string) bool {
-	return addr != ""
+	i := strings.LastIndex(addr, ":")
+	if i == -1 {
+		return false
+	}
+	ip, port := net.ParseIP(addr[0:i]), addr[i+1:]
+	return ip != nil && port != ""
 }
 
 // key
