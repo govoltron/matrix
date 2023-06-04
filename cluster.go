@@ -24,9 +24,11 @@ import (
 )
 
 var (
-	discovery Discovery
-	inited    uint32
-	m         sync.Mutex
+	baseCtx    context.Context
+	baseCancel context.CancelFunc
+	discovery  Discovery
+	inited     uint32
+	m          sync.Mutex
 )
 
 type Endpoint struct {
@@ -53,6 +55,7 @@ type Discovery interface {
 	Watch(ctx context.Context, prefix string) (nch chan DiscoveryKeyEvent)
 	Update(ctx context.Context, prefix, uniqueID string, value []byte, ttl time.Duration) (err error)
 	Delete(ctx context.Context, prefix, uniqueID string) (err error)
+	Close(ctx context.Context) (err error)
 }
 
 // Init
@@ -85,6 +88,23 @@ func init0(URL string) (err error) {
 	}
 	if err != nil {
 		discovery = nil
+	} else {
+		baseCtx, baseCancel = context.WithCancel(context.Background())
 	}
 	return
+}
+
+// Close
+func Close() {
+	if atomic.LoadUint32(&inited) == 0 {
+		return
+	}
+	m.Lock()
+	defer m.Unlock()
+	if inited == 1 {
+		defer atomic.StoreUint32(&inited, 0)
+		// Release resources
+		baseCancel()
+		discovery.Close(context.Background())
+	}
 }

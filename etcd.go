@@ -31,6 +31,7 @@ type etcdclient struct {
 	kv      etcd.KV
 	lease   etcd.Lease
 	watcher etcd.Watcher
+	client  *etcd.Client
 }
 
 // newEtcdClient
@@ -84,12 +85,13 @@ func newEtcdClient(u *url.URL) (ec *etcdclient, err error) {
 		kv:      etcd.NewKV(client),
 		lease:   etcd.NewLease(client),
 		watcher: etcd.NewWatcher(client),
+		client:  client,
 	}
 
 	return
 }
 
-// // Endpoints
+// Query
 func (ec *etcdclient) Query(ctx context.Context, prefix string) (values map[string][]byte, err error) {
 	resp, err := ec.kv.Get(ctx, prefix, etcd.WithPrefix())
 	if err != nil {
@@ -104,6 +106,7 @@ func (ec *etcdclient) Query(ctx context.Context, prefix string) (values map[stri
 	return
 }
 
+// Watch
 func (ec *etcdclient) Watch(ctx context.Context, prefix string) chan DiscoveryKeyEvent {
 	wch := ec.watcher.Watch(ctx, prefix, etcd.WithPrefix())
 	nch := make(chan DiscoveryKeyEvent, cap(wch))
@@ -138,7 +141,7 @@ func (ec *etcdclient) Watch(ctx context.Context, prefix string) chan DiscoveryKe
 	return nch
 }
 
-// Report
+// Update
 func (ec *etcdclient) Update(ctx context.Context, prefix, uniqueID string, value []byte, ttl time.Duration) (err error) {
 	var (
 		sec  int64
@@ -161,8 +164,13 @@ func (ec *etcdclient) Update(ctx context.Context, prefix, uniqueID string, value
 	return
 }
 
-// Cancel
+// Delete
 func (ec *etcdclient) Delete(ctx context.Context, prefix, uniqueID string) (err error) {
 	_, err = ec.kv.Delete(ctx, fmt.Sprintf("%s/%s", prefix, uniqueID))
 	return
+}
+
+// Close
+func (ec *etcdclient) Close(ctx context.Context) (err error) {
+	return ec.client.Close()
 }

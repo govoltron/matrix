@@ -59,30 +59,44 @@ func WithKeepalive(timeout, interval time.Duration) AgentOption {
 }
 
 type Agent struct {
-	name              string
-	local             Endpoint
-	up                chan string
-	down              chan string
-	remote            map[string]Endpoint
-	dialTimeout       time.Duration
-	keepaliveTimeout  time.Duration
+	name   string
+	local  Endpoint
+	upchan chan string
+	dwchan chan string
+	remote map[string]Endpoint
+	nchan  chan Endpoint
+	rchan  chan Endpoint
+
+	// Dial timeout
+	dialTimeout time.Duration
+
+	// Keepalive timeout
+	keepaliveTimeout time.Duration
+
+	// Ticker interval for keepalive
 	keepaliveInterval time.Duration
-	wg                sync.WaitGroup
-	ctx               context.Context
-	cancel            context.CancelFunc
-	m                 sync.RWMutex
-	closed            uint32
-	err               error
+
+	wg     sync.WaitGroup
+	ctx    context.Context
+	cancel context.CancelFunc
+	m      sync.RWMutex
+	err    error
+	closed uint32
 }
 
 // NewAgent
 func NewAgent(name string, opts ...AgentOption) (a *Agent) {
+	if name == "" {
+		panic(errors.New("invalid service name"))
+	}
 	a = &Agent{
 		name:              name,
-		up:                make(chan string, 1),
-		down:              make(chan string, 1),
+		upchan:            make(chan string, 1),
+		dwchan:            make(chan string, 1),
 		remote:            make(map[string]Endpoint),
-		dialTimeout:       50 * time.Millisecond,
+		nchan:             nil,
+		rchan:             nil,
+		dialTimeout:       100 * time.Millisecond,
 		keepaliveTimeout:  10 * time.Second,
 		keepaliveInterval: 5 * time.Second,
 	}
@@ -91,7 +105,7 @@ func NewAgent(name string, opts ...AgentOption) (a *Agent) {
 		setOption(a)
 	}
 
-	a.ctx, a.cancel = context.WithCancel(context.Background())
+	a.ctx, a.cancel = context.WithCancel(baseCtx)
 
 	// Sync
 	a.wg.Add(1)
@@ -103,6 +117,26 @@ func NewAgent(name string, opts ...AgentOption) (a *Agent) {
 // Name
 func (a *Agent) Name() (name string) {
 	return a.name
+}
+
+// Watch
+func (a *Agent) Watch() (ctx context.Context, endpoints []Endpoint, nchan, rchan chan Endpoint) {
+	if atomic.LoadUint32(&a.closed) == 1 {
+		ctx = a.ctx
+		return
+	}
+	a.m.RLock()
+	defer a.m.RUnlock()
+	// Read
+	ctx = a.ctx
+	for _, v := range a.remote {
+		endpoints = append(endpoints, v)
+	}
+	nchan = make(chan Endpoint, 10)
+	rchan = make(chan Endpoint, 10)
+	a.nchan = nchan
+	a.rchan = rchan
+	return
 }
 
 // Endpoints
@@ -127,15 +161,21 @@ func (a *Agent) EndpointsWithError() (endpoints []Endpoint, err error) {
 
 // Report
 func (a *Agent) Report(addr string) {
+	if atomic.LoadUint32(&a.closed) == 1 {
+		return
+	}
 	if isValidAddr(addr) {
-		a.up <- addr
+		a.upchan <- addr
 	}
 }
 
 // Cancel
 func (a *Agent) Cancel(addr string) {
+	if atomic.LoadUint32(&a.closed) == 1 {
+		return
+	}
 	if isValidAddr(addr) {
-		a.down <- addr
+		a.dwchan <- addr
 	}
 }
 
@@ -149,15 +189,50 @@ func (a *Agent) Close() {
 	// Close
 	if a.closed == 0 {
 		defer atomic.StoreUint32(&a.closed, 1)
-		// Release resources
 		a.cancel()
 		a.wg.Wait()
-		close(a.up)
-		close(a.down)
-		a.local = zeroEndpoint
-		a.remote = nil
-		a.err = ErrAgentClosed
+		// Release resources
+		a.release()
 	}
+}
+
+// close
+func (a *Agent) close() {
+	if atomic.LoadUint32(&a.closed) == 1 {
+		return
+	}
+	a.m.Lock()
+	defer a.m.Unlock()
+	// Close
+	if a.closed == 0 {
+		defer atomic.StoreUint32(&a.closed, 1)
+		a.cancel()
+		// Release resources
+		a.release()
+	}
+}
+
+// release
+func (a *Agent) release() {
+	if ch := a.upchan; ch != nil {
+		a.upchan = nil
+		close(ch)
+	}
+	if ch := a.dwchan; ch != nil {
+		a.dwchan = nil
+		close(ch)
+	}
+	if ch := a.nchan; ch != nil {
+		a.nchan = nil
+		close(ch)
+	}
+	if ch := a.rchan; ch != nil {
+		a.rchan = nil
+		close(ch)
+	}
+	a.err = ErrAgentClosed
+	a.local = zeroEndpoint
+	a.remote = nil
 }
 
 // genrateUniqueID
@@ -171,19 +246,23 @@ func (a *Agent) genrateUniqueID(addr string) (uniqueID string) {
 func (a *Agent) sync() {
 	defer func() {
 		a.wg.Done()
+		a.close()
 	}()
 
-	if a.err = a.sync0(); a.err != nil {
+	var (
+		timeout  = a.keepaliveTimeout
+		interval = a.keepaliveInterval
+		prefix   = key(a.name, "/endpoints")
+	)
+
+	if a.err = a.sync0(prefix); a.err != nil {
 		return
 	}
 
 	var (
-		prefix   = key(a.name, "/endpoints")
-		nchan    = discovery.Watch(a.ctx, prefix)
-		timeout  = a.keepaliveTimeout
-		interval = a.keepaliveInterval
-		ticker   *time.Ticker
-		tickerC  <-chan time.Time
+		ticker  *time.Ticker
+		tickerC <-chan time.Time
+		nchan   = discovery.Watch(a.ctx, prefix)
 	)
 
 	for {
@@ -209,7 +288,7 @@ func (a *Agent) sync() {
 				a.setLastError(a.up0(prefix, a.local, now, timeout))
 			}
 		// Report
-		case addr := <-a.up:
+		case addr := <-a.upchan:
 			if addr != a.local.Addr {
 				backup := a.local
 				// Update the new endpoint
@@ -227,7 +306,7 @@ func (a *Agent) sync() {
 				tickerC = ticker.C
 			}
 			// Cancel
-		case addr := <-a.down:
+		case addr := <-a.dwchan:
 			if addr == a.local.Addr {
 				a.down0(prefix, a.local, time.Now(), timeout)
 				a.local = zeroEndpoint
@@ -241,10 +320,9 @@ func (a *Agent) sync() {
 }
 
 // sync0
-func (a *Agent) sync0() (err error) {
+func (a *Agent) sync0(prefix string) (err error) {
 	var (
 		values = make(map[string][]byte)
-		prefix = fmt.Sprintf("%s/endpoints", kparser.Resolve(a.Name()))
 	)
 	// Timeout
 	doCtx, cancel := context.WithTimeout(context.Background(), a.dialTimeout)
@@ -300,7 +378,16 @@ func (a *Agent) updateRemote(uniqueID string, value []byte) {
 	if err := json.Unmarshal(value, &endpoint); err != nil {
 		return
 	}
+	if endpoint.ID == "" || endpoint.Addr == "" {
+		return
+	}
+
 	a.remote[uniqueID] = endpoint
+	select {
+	case a.nchan <- endpoint:
+	default:
+		break
+	}
 }
 
 // deleteRemote
@@ -308,7 +395,17 @@ func (a *Agent) deleteRemote(uniqueID string) {
 	a.m.Lock()
 	defer a.m.Unlock()
 	// Delete
+	endpoint, ok := a.remote[uniqueID]
+	if !ok {
+		return
+	}
+
 	delete(a.remote, uniqueID)
+	select {
+	case a.rchan <- endpoint:
+	default:
+		break
+	}
 }
 
 // isValidAddr
