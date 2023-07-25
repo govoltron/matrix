@@ -16,95 +16,175 @@ package cluster
 
 import (
 	"context"
-	"fmt"
-	"net/url"
-	"sync"
-	"sync/atomic"
+	"encoding/json"
+	"strings"
 	"time"
 )
 
-var (
-	baseCtx    context.Context
-	baseCancel context.CancelFunc
-	discovery  Discovery
-	inited     uint32
-	m          sync.Mutex
-)
-
 type Endpoint struct {
-	ID   string `json:"id,omitempty"`
-	Addr string `json:"addr,omitempty"`
-	Time int64  `json:"time,omitempty"`
+	Time   int64  `json:"time"`
+	ID     string `json:"id"`
+	Addr   string `json:"addr"`
+	Weight int    `json:"weight"`
 }
 
-type DiscoveryKeyOp int32
-
-const (
-	DiscoveryKeyUpdate DiscoveryKeyOp = 0
-	DiscoveryKeyDelete DiscoveryKeyOp = 1
-)
-
-type DiscoveryKeyEvent struct {
-	Op       DiscoveryKeyOp
-	UniqueID string
-	Value    []byte
+func (e *Endpoint) Load(b []byte) (err error) {
+	return json.Unmarshal(b, e)
 }
 
-type Discovery interface {
-	Query(ctx context.Context, prefix string) (values map[string][]byte, err error)
-	Watch(ctx context.Context, prefix string) (nch chan DiscoveryKeyEvent)
-	Update(ctx context.Context, prefix, uniqueID string, value []byte, ttl time.Duration) (err error)
-	Delete(ctx context.Context, prefix, uniqueID string) (err error)
+func (e *Endpoint) Save() (b []byte, err error) {
+	return json.Marshal(e)
+}
+
+type KVWatcher interface {
+	OnInit(values map[string][]byte)
+	OnUpdate(member string, value []byte)
+	OnDelete(member string)
+}
+
+// Key Server
+type KVS interface {
+	Lookup(ctx context.Context, key string) (values map[string][]byte, err error)
+	Watch(ctx context.Context, key string, watcher KVWatcher) (err error)
+	Update(ctx context.Context, key, member string, ttl time.Duration, values []byte) (err error)
+	Delete(ctx context.Context, key, member string) (err error)
 	Close(ctx context.Context) (err error)
 }
 
-// Init
-func Init(URL string) (err error) {
-	if atomic.LoadUint32(&inited) != 0 {
-		return
+type KeyParser interface {
+	Resolve(name string) (key string)
+}
+
+type defaultKeyParser struct {
+}
+
+func (kp *defaultKeyParser) Resolve(name string) (key string) {
+	return name
+}
+
+type Watcher interface {
+	OnInit(endpoints map[string]Endpoint)
+	OnUpdate(member string, endpoint Endpoint)
+	OnDelete(member string)
+}
+
+type MatrixOption func(m *Matrix)
+
+// WithMatrixKeyParser
+func WithMatrixKeyParser(kparser KeyParser) MatrixOption {
+	return func(m *Matrix) {
+		if kparser != nil {
+			m.kparser = kparser
+		}
 	}
-	m.Lock()
-	defer m.Unlock()
-	if inited == 0 {
-		defer func() {
-			if err == nil {
-				atomic.StoreUint32(&inited, 1)
-			}
-		}()
-		err = init0(URL)
+}
+
+type Matrix struct {
+	name    string
+	ctx     context.Context
+	kvs     KVS
+	kparser KeyParser
+}
+
+// NewCluster returns a new matrix.
+func NewCluster(ctx context.Context, kvs KVS, name string, opts ...MatrixOption) (m *Matrix) {
+	m = &Matrix{}
+	// Set options
+	for _, setOpt := range opts {
+		setOpt(m)
+	}
+	m.ctx = ctx
+	m.kvs = kvs
+	m.name = name
+	// Key parser
+	if m.kparser == nil {
+		m.kparser = &defaultKeyParser{}
 	}
 	return
 }
 
-func init0(URL string) (err error) {
-	var u *url.URL
-	if u, err = url.Parse(URL); err != nil {
-		return
-	}
-	if u.Scheme == "etcd" {
-		discovery, err = newEtcdClient(u)
-	} else {
-		err = fmt.Errorf("discovery engine not supported")
-	}
+// Lookup
+func (m *Matrix) Lookup(ctx context.Context, name string) (endpoints map[string]Endpoint, err error) {
+	values, err := m.kvs.Lookup(ctx, m.buildKey(name))
 	if err != nil {
-		discovery = nil
-	} else {
-		baseCtx, baseCancel = context.WithCancel(context.Background())
+		return nil, err
 	}
+	if len(values) > 0 {
+		endpoints = make(map[string]Endpoint)
+	}
+	for member, value := range values {
+		var ep Endpoint
+		if err1 := ep.Load(value); err1 == nil {
+			endpoints[member] = ep
+		}
+	}
+	return
+}
+
+// Watch
+func (m *Matrix) Watch(ctx context.Context, name string, watcher Watcher) (err error) {
+	return m.kvs.Watch(ctx, m.buildKey(name), &wrapWatcher{watcher})
+}
+
+// Update
+func (m *Matrix) Update(ctx context.Context, name, member string, ttl time.Duration, endpoint Endpoint) (err error) {
+	value, err := endpoint.Save()
+	if err != nil {
+		return err
+	}
+	return m.kvs.Update(ctx, m.buildKey(name), member, ttl, value)
+}
+
+// Delete
+func (m *Matrix) Delete(ctx context.Context, name, member string) (err error) {
+	return m.kvs.Delete(ctx, m.buildKey(name), member)
+}
+
+// buildKey
+func (m *Matrix) buildKey(name string) (key string) {
+	key += "/"
+	key += m.name
+	key += "/"
+	key += strings.TrimPrefix(m.kparser.Resolve(name), "/")
+	key += "/endpoints"
 	return
 }
 
 // Close
-func Close() {
-	if atomic.LoadUint32(&inited) == 0 {
+func (m *Matrix) Close(ctx context.Context) (err error) {
+	return m.kvs.Close(ctx)
+}
+
+type wrapWatcher struct {
+	watcher Watcher
+}
+
+// OnInit implements KVWatcher.
+func (ww *wrapWatcher) OnInit(values map[string][]byte) {
+	var (
+		endpoints = make(map[string]Endpoint)
+	)
+	for member, value := range values {
+		var ep Endpoint
+		if err1 := ep.Load(value); err1 == nil {
+			endpoints[member] = ep
+		}
+	}
+	if len(endpoints) <= 0 {
 		return
 	}
-	m.Lock()
-	defer m.Unlock()
-	if inited == 1 {
-		defer atomic.StoreUint32(&inited, 0)
-		// Release resources
-		baseCancel()
-		discovery.Close(context.Background())
+	ww.watcher.OnInit(endpoints)
+}
+
+// OnUpdate implements KVWatcher.
+func (ww *wrapWatcher) OnUpdate(member string, value []byte) {
+	var ep Endpoint
+	if err := ep.Load(value); err == nil {
+		ww.watcher.OnUpdate(member, ep)
 	}
+}
+
+// OnDelete implements KVWatcher.
+func (ww *wrapWatcher) OnDelete(member string) {
+	ww.watcher.OnDelete(member)
 }
