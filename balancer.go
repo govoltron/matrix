@@ -14,24 +14,46 @@
 
 package cluster
 
+import (
+	"sync"
+)
+
 type Balancer struct {
-	workers    []Endpoint
-	ready      []Endpoint
-	deprecated []Endpoint
+	workers    map[string]Endpoint
+	ready      map[string]Endpoint
+	deprecated map[string]Endpoint
 	broker     *Broker
+	mu         sync.RWMutex
 }
 
 // NewBalancer
 func NewBalancer(broker *Broker) (b *Balancer) {
-	return &Balancer{broker: broker}
+	b = &Balancer{
+		workers:    make(map[string]Endpoint),
+		ready:      make(map[string]Endpoint),
+		deprecated: make(map[string]Endpoint),
+		broker:     broker,
+	}
+	return
 }
 
 // Acquire
 func (b *Balancer) Acquire() (addr string) {
+
+	b.broker.Endpoints()
+
+	var endpoint Endpoint
+	for _, ep := range b.ready {
+		endpoint = ep
+		break
+	}
+	if endpoint.Addr != "" {
+		return endpoint.Addr
+	}
 	return
 }
 
 // Release
 func (b *Balancer) Release(addr string) {
-	return
+
 }

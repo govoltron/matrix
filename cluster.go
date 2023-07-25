@@ -170,10 +170,9 @@ func (ww *wrapWatcher) OnInit(values map[string][]byte) {
 			endpoints[member] = ep
 		}
 	}
-	if len(endpoints) <= 0 {
-		return
+	if len(endpoints) > 0 {
+		ww.watcher.OnInit(endpoints)
 	}
-	ww.watcher.OnInit(endpoints)
 }
 
 // OnUpdate implements KVWatcher.
