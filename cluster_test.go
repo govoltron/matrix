@@ -65,11 +65,15 @@ func TestCluster(t *testing.T) {
 		reporter3.Close()
 	}()
 
+	cluster.SetValue(ctx, "user-core-service", "options", []byte(`{"user":"root"}`))
+
 	for i := 0; i < 5; i++ {
-		v, _ := broker.GetValue("options")
-		fmt.Printf("v: %s\n", string(v))
+		values, _ := cluster.GetValues(ctx, "user-core-service")
+		fmt.Printf("v: %+v\n", values)
 		time.Sleep(1 * time.Second)
 	}
+
+	cluster.DeleteValue(ctx, "user-core-service", "options")
 
 	time.Sleep(time.Second * 30)
 

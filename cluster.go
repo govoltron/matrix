@@ -105,13 +105,28 @@ func NewCluster(ctx context.Context, name string, kvs KVS, opts ...MatrixOption)
 	return
 }
 
+// GetValues
+func (m *Matrix) GetValues(ctx context.Context, srvname string) (values map[string][]byte, err error) {
+	return m.kvs.Lookup(ctx, m.buildKey(srvname, "/dict"))
+}
+
 // WatchValues
 func (m *Matrix) WatchValues(ctx context.Context, srvname string, watcher KVWatcher) (err error) {
 	return m.kvs.Watch(ctx, m.buildKey(srvname, "/dict"), watcher)
 }
 
-// LookupMembers
-func (m *Matrix) LookupMembers(ctx context.Context, srvname string) (endpoints map[string]Endpoint, err error) {
+// SetValue
+func (m *Matrix) SetValue(ctx context.Context, srvname, key string, value []byte) (err error) {
+	return m.kvs.Update(ctx, m.buildKey(srvname, "/dict"), key, 0, value)
+}
+
+// DeleteValue
+func (m *Matrix) DeleteValue(ctx context.Context, srvname, key string) (err error) {
+	return m.kvs.Delete(ctx, m.buildKey(srvname, "/dict"), key)
+}
+
+// GetMembers
+func (m *Matrix) GetMembers(ctx context.Context, srvname string) (endpoints map[string]Endpoint, err error) {
 	values, err := m.kvs.Lookup(ctx, m.buildKey(srvname, "/endpoints"))
 	if err != nil {
 		return nil, err

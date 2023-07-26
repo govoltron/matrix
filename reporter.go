@@ -163,6 +163,7 @@ func (r *Reporter) Close() {
 		r.reportT = nil
 		r.reportC = nil
 	}
+	// TODO Cancel endpoint
 }
 
 // register
