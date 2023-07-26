@@ -50,7 +50,7 @@ type Reporter struct {
 }
 
 // NewReporter
-func (m *Matrix) NewReporter(ctx context.Context, srvname string) (r *Reporter) {
+func (m *Matrix) NewReporter(ctx context.Context, srvname string, opts ...ReporterOption) (r *Reporter) {
 	r = &Reporter{
 		srvname:  srvname,
 		endpoint: Endpoint{},
@@ -61,6 +61,10 @@ func (m *Matrix) NewReporter(ctx context.Context, srvname string) (r *Reporter) 
 		preemptC: make(chan func(), 1),
 		timeout:  50 * time.Millisecond,
 		matrix:   m,
+	}
+	// Set options
+	for _, setOpt := range opts {
+		setOpt(r)
 	}
 	// Context
 	r.ctx, r.cancel = context.WithCancel(ctx)

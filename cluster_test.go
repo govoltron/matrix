@@ -8,15 +8,15 @@ import (
 	"time"
 )
 
-type CustomKeyParser struct{}
+type CustomServiceKeyParser struct{}
 
 // Resolve implements KeyParser.
-func (kp *CustomKeyParser) Resolve(name string) (key string) {
+func (kp *CustomServiceKeyParser) Resolve(srvname string) (key string) {
 	switch {
-	case strings.HasSuffix(name, "-service"):
-		return fmt.Sprintf("/services/%s", name[0:len(name)-8])
+	case strings.HasSuffix(srvname, "-service"):
+		return fmt.Sprintf("/services/%s", srvname[0:len(srvname)-8])
 	}
-	return fmt.Sprintf("/unknown/%s", name)
+	return fmt.Sprintf("/unknown/%s", srvname)
 }
 
 func TestCluster(t *testing.T) {
@@ -28,7 +28,7 @@ func TestCluster(t *testing.T) {
 		return
 	}
 
-	cluster := NewCluster(ctx, "cu4k6mg398qd", kvs, WithMatrixKeyParser(&CustomKeyParser{}))
+	cluster := NewCluster(ctx, "cu4k6mg398qd", kvs, WithMatrixServiceKeyParser(&CustomServiceKeyParser{}))
 	defer cluster.Close(context.TODO())
 
 	broker := cluster.NewBroker(ctx, "user-core-service")

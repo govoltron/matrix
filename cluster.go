@@ -51,15 +51,15 @@ type KVS interface {
 	Close(ctx context.Context) (err error)
 }
 
-type KeyParser interface {
+type ServiceKeyParser interface {
 	Resolve(name string) (key string)
 }
 
-type defaultKeyParser struct {
+type defaultServiceKeyParser struct {
 }
 
-func (kp *defaultKeyParser) Resolve(name string) (key string) {
-	return name
+func (kp *defaultServiceKeyParser) Resolve(srvname string) (key string) {
+	return srvname
 }
 
 type Watcher interface {
@@ -70,8 +70,8 @@ type Watcher interface {
 
 type MatrixOption func(m *Matrix)
 
-// WithMatrixKeyParser
-func WithMatrixKeyParser(kparser KeyParser) MatrixOption {
+// WithMatrixServiceKeyParser
+func WithMatrixServiceKeyParser(kparser ServiceKeyParser) MatrixOption {
 	return func(m *Matrix) {
 		if kparser != nil {
 			m.kparser = kparser
@@ -83,29 +83,30 @@ type Matrix struct {
 	name    string
 	ctx     context.Context
 	kvs     KVS
-	kparser KeyParser
+	kparser ServiceKeyParser
 }
 
 // NewCluster returns a new matrix.
 func NewCluster(ctx context.Context, name string, kvs KVS, opts ...MatrixOption) (m *Matrix) {
-	m = &Matrix{}
+	m = &Matrix{
+		name: name,
+		ctx:  ctx,
+		kvs:  kvs,
+	}
 	// Set options
 	for _, setOpt := range opts {
 		setOpt(m)
 	}
-	m.ctx = ctx
-	m.kvs = kvs
-	m.name = name
 	// Key parser
 	if m.kparser == nil {
-		m.kparser = &defaultKeyParser{}
+		m.kparser = &defaultServiceKeyParser{}
 	}
 	return
 }
 
 // Lookup
-func (m *Matrix) Lookup(ctx context.Context, name string) (endpoints map[string]Endpoint, err error) {
-	values, err := m.kvs.Lookup(ctx, m.buildKey(name))
+func (m *Matrix) Lookup(ctx context.Context, srvname string) (endpoints map[string]Endpoint, err error) {
+	values, err := m.kvs.Lookup(ctx, m.buildKey(srvname))
 	if err != nil {
 		return nil, err
 	}
@@ -122,30 +123,30 @@ func (m *Matrix) Lookup(ctx context.Context, name string) (endpoints map[string]
 }
 
 // Watch
-func (m *Matrix) Watch(ctx context.Context, name string, watcher Watcher) (err error) {
-	return m.kvs.Watch(ctx, m.buildKey(name), &wrapWatcher{watcher})
+func (m *Matrix) Watch(ctx context.Context, srvname string, watcher Watcher) (err error) {
+	return m.kvs.Watch(ctx, m.buildKey(srvname), &wrapWatcher{watcher})
 }
 
 // Update
-func (m *Matrix) Update(ctx context.Context, name, member string, ttl time.Duration, endpoint Endpoint) (err error) {
+func (m *Matrix) Update(ctx context.Context, srvname, member string, ttl time.Duration, endpoint Endpoint) (err error) {
 	value, err := endpoint.Save()
 	if err != nil {
 		return err
 	}
-	return m.kvs.Update(ctx, m.buildKey(name), member, ttl, value)
+	return m.kvs.Update(ctx, m.buildKey(srvname), member, ttl, value)
 }
 
 // Delete
-func (m *Matrix) Delete(ctx context.Context, name, member string) (err error) {
-	return m.kvs.Delete(ctx, m.buildKey(name), member)
+func (m *Matrix) Delete(ctx context.Context, srvname, member string) (err error) {
+	return m.kvs.Delete(ctx, m.buildKey(srvname), member)
 }
 
 // buildKey
-func (m *Matrix) buildKey(name string) (key string) {
+func (m *Matrix) buildKey(srvname string) (key string) {
 	key += "/"
 	key += m.name
 	key += "/"
-	key += strings.TrimPrefix(m.kparser.Resolve(name), "/")
+	key += strings.TrimPrefix(m.kparser.Resolve(srvname), "/")
 	key += "/endpoints"
 	return
 }
