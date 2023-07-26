@@ -115,6 +115,11 @@ func (m *Matrix) WatchValues(ctx context.Context, srvname string, watcher KVWatc
 	return m.kvs.Watch(ctx, m.buildKey(srvname, "/dict"), watcher)
 }
 
+// GetValue
+func (m *Matrix) GetValue(ctx context.Context, srvname, key string) (value []byte, err error) {
+	return m.kvs.Query(ctx, m.buildKey(srvname, "/dict"), key)
+}
+
 // SetValue
 func (m *Matrix) SetValue(ctx context.Context, srvname, key string, value []byte) (err error) {
 	return m.kvs.Update(ctx, m.buildKey(srvname, "/dict"), key, 0, value)
