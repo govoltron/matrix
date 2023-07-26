@@ -117,12 +117,12 @@ func (kvs *EtcdKVS) Watch(ctx context.Context, key string, watcher KVWatcher) (e
 			case resp := <-wch:
 				for _, ev := range resp.Events {
 					var (
-						member = string(ev.Kv.Key[len(key)+1:])
+						field = string(ev.Kv.Key[len(key)+1:])
 					)
 					if ev.Type == etcd.EventTypePut {
-						watcher.OnUpdate(member, ev.Kv.Value)
+						watcher.OnUpdate(field, ev.Kv.Value)
 					} else if ev.Type == etcd.EventTypeDelete {
-						watcher.OnDelete(member)
+						watcher.OnDelete(field)
 					}
 				}
 				if resp.Canceled {
@@ -135,8 +135,20 @@ func (kvs *EtcdKVS) Watch(ctx context.Context, key string, watcher KVWatcher) (e
 	return
 }
 
+// Query implements KVS.
+func (kvs *EtcdKVS) Query(ctx context.Context, key, field string) (value []byte, err error) {
+	resp, err := kvs.client.Get(ctx, key+kvs.separator+field)
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Kvs) <= 0 {
+		return nil, nil
+	}
+	return resp.Kvs[0].Value, nil
+}
+
 // Update implements KVS.
-func (kvs *EtcdKVS) Update(ctx context.Context, key, member string, ttl time.Duration, value []byte) (err error) {
+func (kvs *EtcdKVS) Update(ctx context.Context, key, field string, ttl time.Duration, value []byte) (err error) {
 	var (
 		sec  int64
 		opts []etcd.OpOption
@@ -151,13 +163,13 @@ func (kvs *EtcdKVS) Update(ctx context.Context, key, member string, ttl time.Dur
 			opts = append(opts, etcd.WithLease(resp.ID))
 		}
 	}
-	_, err = kvs.client.Put(ctx, key+kvs.separator+member, string(value), opts...)
+	_, err = kvs.client.Put(ctx, key+kvs.separator+field, string(value), opts...)
 	return
 }
 
 // Delete implements KVS.
-func (kvs *EtcdKVS) Delete(ctx context.Context, key, member string) (err error) {
-	_, err = kvs.client.Delete(ctx, key+kvs.separator+member)
+func (kvs *EtcdKVS) Delete(ctx context.Context, key, field string) (err error) {
+	_, err = kvs.client.Delete(ctx, key+kvs.separator+field)
 	return
 }
 

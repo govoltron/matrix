@@ -20,12 +20,21 @@ import (
 	"sync/atomic"
 )
 
+type kv struct {
+	Key   string
+	Value []byte
+}
+
 type Broker struct {
 	srvname   string
 	endpoints map[string]Endpoint
-	updateC   chan Endpoint
-	deleteC   chan string
-	watcher   *watcher
+	dict      map[string][]byte
+	updateMC  chan Endpoint
+	deleteMC  chan string
+	updateVC  chan kv
+	deleteVC  chan string
+	mwatcher  *memberWatcher
+	vwatcher  *valueWatcher
 	ctx       context.Context
 	cancel    context.CancelFunc
 	closed    uint32
@@ -39,14 +48,22 @@ func (m *Matrix) NewBroker(ctx context.Context, srvname string) (b *Broker) {
 	b = &Broker{
 		srvname:   srvname,
 		endpoints: make(map[string]Endpoint),
-		updateC:   make(chan Endpoint, 1),
-		deleteC:   make(chan string, 1),
+		dict:      make(map[string][]byte),
+		updateMC:  make(chan Endpoint, 1),
+		deleteMC:  make(chan string, 1),
+		updateVC:  make(chan kv, 1),
+		deleteVC:  make(chan string, 1),
 		matrix:    m,
 	}
 	// Context
 	b.ctx, b.cancel = context.WithCancel(ctx)
 	// Watcher
-	b.watcher = &watcher{b}
+	b.mwatcher = &memberWatcher{b}
+	b.vwatcher = &valueWatcher{b}
+	// Watch
+	// TODO Fix error
+	_ = b.matrix.WatchMembers(b.ctx, b.srvname, b.mwatcher)
+	_ = b.matrix.WatchValues(b.ctx, b.srvname, b.vwatcher)
 	// Sync
 	b.wg.Add(1)
 	go b.sync()
@@ -60,23 +77,30 @@ func (b *Broker) sync() {
 		b.wg.Done()
 	}()
 
-	// Watch
-	b.matrix.Watch(b.ctx, b.srvname, b.watcher)
-
 	for {
 		select {
 		// Done
 		case <-b.ctx.Done():
 			return
-		// Update
-		case endpoint := <-b.updateC:
+		// Update endpoint
+		case endpoint := <-b.updateMC:
 			b.mu.Lock()
 			b.endpoints[endpoint.ID] = endpoint
 			b.mu.Unlock()
-		// Delete
-		case member := <-b.deleteC:
+		// Delete endpoint
+		case member := <-b.deleteMC:
 			b.mu.Lock()
 			delete(b.endpoints, member)
+			b.mu.Unlock()
+		// Update value
+		case kv := <-b.updateVC:
+			b.mu.Lock()
+			b.dict[kv.Key] = kv.Value
+			b.mu.Unlock()
+		// Delete value
+		case key := <-b.deleteVC:
+			b.mu.Lock()
+			delete(b.dict, key)
 			b.mu.Unlock()
 		}
 	}
@@ -93,6 +117,14 @@ func (b *Broker) Endpoints() (endpoints map[string]Endpoint) {
 	return
 }
 
+// GetValue
+func (b *Broker) GetValue(key string) (value []byte, exists bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	value, exists = b.dict[key]
+	return
+}
+
 // Close
 func (b *Broker) Close() {
 	if !atomic.CompareAndSwapUint32(&b.closed, 0, 1) {
@@ -102,12 +134,12 @@ func (b *Broker) Close() {
 	b.wg.Wait()
 }
 
-type watcher struct {
+type memberWatcher struct {
 	b *Broker
 }
 
 // OnInit implements Watcher.
-func (w *watcher) OnInit(endpoints map[string]Endpoint) {
+func (w *memberWatcher) OnInit(endpoints map[string]Endpoint) {
 	w.b.mu.Lock()
 	defer w.b.mu.Unlock()
 	w.b.endpoints = make(map[string]Endpoint)
@@ -117,11 +149,35 @@ func (w *watcher) OnInit(endpoints map[string]Endpoint) {
 }
 
 // OnUpdate implements Watcher.
-func (w *watcher) OnUpdate(member string, endpoint Endpoint) {
-	w.b.updateC <- endpoint
+func (w *memberWatcher) OnUpdate(member string, endpoint Endpoint) {
+	w.b.updateMC <- endpoint
 }
 
 // OnDelete implements Watcher.
-func (w *watcher) OnDelete(member string) {
-	w.b.deleteC <- member
+func (w *memberWatcher) OnDelete(member string) {
+	w.b.deleteMC <- member
+}
+
+type valueWatcher struct {
+	b *Broker
+}
+
+// OnInit implements KVWatcher.
+func (w *valueWatcher) OnInit(values map[string][]byte) {
+	w.b.mu.Lock()
+	defer w.b.mu.Unlock()
+	w.b.dict = make(map[string][]byte)
+	for key, value := range values {
+		w.b.dict[key] = value
+	}
+}
+
+// OnUpdate implements KVWatcher.
+func (w *valueWatcher) OnUpdate(key string, value []byte) {
+	w.b.updateVC <- kv{key, value}
+}
+
+// OnDelete implements KVWatcher.
+func (w *valueWatcher) OnDelete(key string) {
+	w.b.deleteVC <- key
 }

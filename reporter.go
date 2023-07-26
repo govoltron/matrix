@@ -172,7 +172,7 @@ func (r *Reporter) register(ctx context.Context, endpoint Endpoint, ttl time.Dur
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	// Update endpoint
-	return r.matrix.Update(ctx, r.srvname, endpoint.ID, ttl, endpoint)
+	return r.matrix.UpdateMember(ctx, r.srvname, endpoint.ID, ttl, endpoint)
 }
 
 // unregister
@@ -180,5 +180,5 @@ func (r *Reporter) unregister(ctx context.Context, endpoint Endpoint) (err error
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	// Delete endpoint
-	return r.matrix.Delete(ctx, r.srvname, endpoint.ID)
+	return r.matrix.DeleteMember(ctx, r.srvname, endpoint.ID)
 }

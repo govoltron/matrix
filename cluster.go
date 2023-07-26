@@ -38,16 +38,17 @@ func (e *Endpoint) Save() (b []byte, err error) {
 
 type KVWatcher interface {
 	OnInit(values map[string][]byte)
-	OnUpdate(member string, value []byte)
-	OnDelete(member string)
+	OnUpdate(field string, value []byte)
+	OnDelete(field string)
 }
 
 // Key Server
 type KVS interface {
 	Lookup(ctx context.Context, key string) (values map[string][]byte, err error)
 	Watch(ctx context.Context, key string, watcher KVWatcher) (err error)
-	Update(ctx context.Context, key, member string, ttl time.Duration, values []byte) (err error)
-	Delete(ctx context.Context, key, member string) (err error)
+	Query(ctx context.Context, key, field string) (value []byte, err error)
+	Update(ctx context.Context, key, field string, ttl time.Duration, values []byte) (err error)
+	Delete(ctx context.Context, key, field string) (err error)
 	Close(ctx context.Context) (err error)
 }
 
@@ -104,9 +105,14 @@ func NewCluster(ctx context.Context, name string, kvs KVS, opts ...MatrixOption)
 	return
 }
 
-// Lookup
-func (m *Matrix) Lookup(ctx context.Context, srvname string) (endpoints map[string]Endpoint, err error) {
-	values, err := m.kvs.Lookup(ctx, m.buildKey(srvname))
+// WatchValues
+func (m *Matrix) WatchValues(ctx context.Context, srvname string, watcher KVWatcher) (err error) {
+	return m.kvs.Watch(ctx, m.buildKey(srvname, "/dict"), watcher)
+}
+
+// LookupMembers
+func (m *Matrix) LookupMembers(ctx context.Context, srvname string) (endpoints map[string]Endpoint, err error) {
+	values, err := m.kvs.Lookup(ctx, m.buildKey(srvname, "/endpoints"))
 	if err != nil {
 		return nil, err
 	}
@@ -122,32 +128,34 @@ func (m *Matrix) Lookup(ctx context.Context, srvname string) (endpoints map[stri
 	return
 }
 
-// Watch
-func (m *Matrix) Watch(ctx context.Context, srvname string, watcher Watcher) (err error) {
-	return m.kvs.Watch(ctx, m.buildKey(srvname), &wrapWatcher{watcher})
+// WatchMembers
+func (m *Matrix) WatchMembers(ctx context.Context, srvname string, watcher Watcher) (err error) {
+	return m.kvs.Watch(ctx, m.buildKey(srvname, "/endpoints"), &wrapWatcher{watcher})
 }
 
-// Update
-func (m *Matrix) Update(ctx context.Context, srvname, member string, ttl time.Duration, endpoint Endpoint) (err error) {
+// UpdateMember
+func (m *Matrix) UpdateMember(ctx context.Context, srvname, member string, ttl time.Duration, endpoint Endpoint) (err error) {
 	value, err := endpoint.Save()
 	if err != nil {
 		return err
 	}
-	return m.kvs.Update(ctx, m.buildKey(srvname), member, ttl, value)
+	return m.kvs.Update(ctx, m.buildKey(srvname, "/endpoints"), member, ttl, value)
 }
 
-// Delete
-func (m *Matrix) Delete(ctx context.Context, srvname, member string) (err error) {
-	return m.kvs.Delete(ctx, m.buildKey(srvname), member)
+// DeleteMember
+func (m *Matrix) DeleteMember(ctx context.Context, srvname, member string) (err error) {
+	return m.kvs.Delete(ctx, m.buildKey(srvname, "/endpoints"), member)
 }
 
 // buildKey
-func (m *Matrix) buildKey(srvname string) (key string) {
+func (m *Matrix) buildKey(srvname, suffix string) (key string) {
 	key += "/"
 	key += m.name
 	key += "/"
 	key += strings.TrimPrefix(m.kparser.Resolve(srvname), "/")
-	key += "/endpoints"
+	if suffix != "" {
+		key += suffix
+	}
 	return
 }
 
@@ -165,10 +173,10 @@ func (ww *wrapWatcher) OnInit(values map[string][]byte) {
 	var (
 		endpoints = make(map[string]Endpoint)
 	)
-	for member, value := range values {
+	for field, value := range values {
 		var ep Endpoint
 		if err1 := ep.Load(value); err1 == nil {
-			endpoints[member] = ep
+			endpoints[field] = ep
 		}
 	}
 	if len(endpoints) > 0 {
@@ -177,14 +185,14 @@ func (ww *wrapWatcher) OnInit(values map[string][]byte) {
 }
 
 // OnUpdate implements KVWatcher.
-func (ww *wrapWatcher) OnUpdate(member string, value []byte) {
+func (ww *wrapWatcher) OnUpdate(field string, value []byte) {
 	var ep Endpoint
 	if err := ep.Load(value); err == nil {
-		ww.watcher.OnUpdate(member, ep)
+		ww.watcher.OnUpdate(field, ep)
 	}
 }
 
 // OnDelete implements KVWatcher.
-func (ww *wrapWatcher) OnDelete(member string) {
-	ww.watcher.OnDelete(member)
+func (ww *wrapWatcher) OnDelete(field string) {
+	ww.watcher.OnDelete(field)
 }

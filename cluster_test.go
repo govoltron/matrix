@@ -28,7 +28,9 @@ func TestCluster(t *testing.T) {
 		return
 	}
 
-	cluster := NewCluster(ctx, "cu4k6mg398qd", kvs, WithMatrixServiceKeyParser(&CustomServiceKeyParser{}))
+	cluster := NewCluster(ctx, "cu4k6mg398qd", kvs,
+		WithMatrixServiceKeyParser(&CustomServiceKeyParser{}),
+	)
 	defer cluster.Close(context.TODO())
 
 	broker := cluster.NewBroker(ctx, "user-core-service")
@@ -62,6 +64,12 @@ func TestCluster(t *testing.T) {
 		reporter2.Close()
 		reporter3.Close()
 	}()
+
+	for i := 0; i < 5; i++ {
+		v, _ := broker.GetValue("options")
+		fmt.Printf("v: %s\n", string(v))
+		time.Sleep(1 * time.Second)
+	}
 
 	time.Sleep(time.Second * 30)
 
