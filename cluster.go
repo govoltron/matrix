@@ -87,7 +87,7 @@ type Matrix struct {
 }
 
 // NewCluster returns a new matrix.
-func NewCluster(ctx context.Context, kvs KVS, name string, opts ...MatrixOption) (m *Matrix) {
+func NewCluster(ctx context.Context, name string, kvs KVS, opts ...MatrixOption) (m *Matrix) {
 	m = &Matrix{}
 	// Set options
 	for _, setOpt := range opts {

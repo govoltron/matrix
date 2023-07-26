@@ -26,7 +26,7 @@ type EtcdKVSOption func(kvs *EtcdKVS)
 // WithEtcdDialTimeout
 func WithEtcdDialTimeout(timeout time.Duration) EtcdKVSOption {
 	return func(kvs *EtcdKVS) {
-		if 0 < timeout {
+		if timeout > 0 {
 			kvs.config.DialTimeout = timeout
 		}
 	}
@@ -141,7 +141,7 @@ func (kvs *EtcdKVS) Update(ctx context.Context, key, member string, ttl time.Dur
 		sec  int64
 		opts []etcd.OpOption
 	)
-	if 0 < ttl {
+	if ttl > 0 {
 		sec = int64(ttl / time.Second)
 	}
 	if sec > 0 {

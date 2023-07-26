@@ -51,7 +51,7 @@ func NewBalancer(broker *Broker) (b *Balancer) {
 		broker:   broker,
 		rss:      make([]*node, 0),
 		rsm:      make(map[string]int),
-		interval: 2 * time.Second,
+		interval: 5 * time.Second,
 	}
 	return
 }
@@ -72,7 +72,7 @@ func (b *Balancer) Next() (addr string) {
 func (b *Balancer) Unhealth(addr string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	if node, ok := b.node(addr); ok && 0 < node.effective {
+	if node, ok := b.node(addr); ok && node.effective > 0 {
 		node.effective = (int)(node.effective / 2)
 	}
 }
@@ -88,7 +88,7 @@ func (b *Balancer) IsDeprecated(addr string) (yes bool) {
 // update
 func (b *Balancer) update() {
 	now := time.Now()
-	if 0 < len(b.rss) && now.Sub(b.last) < b.interval {
+	if len(b.rss) > 0 && now.Sub(b.last) < b.interval {
 		return
 	}
 	// Get endpoints and update

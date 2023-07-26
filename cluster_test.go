@@ -28,7 +28,7 @@ func TestCluster(t *testing.T) {
 		return
 	}
 
-	cluster := NewCluster(ctx, kvs, "cu4k6mg398qd", WithMatrixKeyParser(&CustomKeyParser{}))
+	cluster := NewCluster(ctx, "cu4k6mg398qd", kvs, WithMatrixKeyParser(&CustomKeyParser{}))
 	defer cluster.Close(context.TODO())
 
 	broker := cluster.NewBroker(ctx, "user-core-service")

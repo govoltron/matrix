@@ -35,9 +35,9 @@ type Broker struct {
 }
 
 // NewBroker
-func (m *Matrix) NewBroker(ctx context.Context, name string) (b *Broker) {
+func (m *Matrix) NewBroker(ctx context.Context, srvname string) (b *Broker) {
 	b = &Broker{
-		name:      name,
+		name:      srvname,
 		endpoints: make(map[string]Endpoint),
 		updateC:   make(chan Endpoint, 1),
 		deleteC:   make(chan string, 1),

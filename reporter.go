@@ -50,9 +50,9 @@ type Reporter struct {
 }
 
 // NewReporter
-func (m *Matrix) NewReporter(ctx context.Context, name string) (r *Reporter) {
+func (m *Matrix) NewReporter(ctx context.Context, srvname string) (r *Reporter) {
 	r = &Reporter{
-		name:     name,
+		name:     srvname,
 		local:    Endpoint{},
 		ttl:      0,
 		reportT:  nil,
