@@ -21,7 +21,7 @@ import (
 )
 
 type Broker struct {
-	name      string
+	srvname   string
 	endpoints map[string]Endpoint
 	updateC   chan Endpoint
 	deleteC   chan string
@@ -37,7 +37,7 @@ type Broker struct {
 // NewBroker
 func (m *Matrix) NewBroker(ctx context.Context, srvname string) (b *Broker) {
 	b = &Broker{
-		name:      srvname,
+		srvname:   srvname,
 		endpoints: make(map[string]Endpoint),
 		updateC:   make(chan Endpoint, 1),
 		deleteC:   make(chan string, 1),
@@ -61,7 +61,7 @@ func (b *Broker) sync() {
 	}()
 
 	// Watch
-	b.matrix.Watch(b.ctx, b.name, b.watcher)
+	b.matrix.Watch(b.ctx, b.srvname, b.watcher)
 
 	for {
 		select {

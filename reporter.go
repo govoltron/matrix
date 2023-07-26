@@ -33,8 +33,8 @@ func WithReporterTimeout(timeout time.Duration) ReporterOption {
 }
 
 type Reporter struct {
-	name     string
-	local    Endpoint
+	srvname  string
+	endpoint Endpoint
 	ttl      time.Duration
 	cancelC  chan Endpoint
 	preemptC chan func()
@@ -52,8 +52,8 @@ type Reporter struct {
 // NewReporter
 func (m *Matrix) NewReporter(ctx context.Context, srvname string) (r *Reporter) {
 	r = &Reporter{
-		name:     srvname,
-		local:    Endpoint{},
+		srvname:  srvname,
+		endpoint: Endpoint{},
 		ttl:      0,
 		reportT:  nil,
 		reportC:  nil,
@@ -83,7 +83,7 @@ func (r *Reporter) sync() {
 			return
 		// Report
 		case <-r.reportC:
-			r.register(context.TODO(), r.local, r.ttl)
+			r.register(context.TODO(), r.endpoint, r.ttl)
 		// Cancel
 		case ep := <-r.cancelC:
 			r.unregister(context.TODO(), ep)
@@ -110,8 +110,8 @@ func (r *Reporter) Keepalive(addr string, weight int, ttl time.Duration) {
 	// Preempt
 	r.preempt(func() {
 		// Cancel old endpoint
-		if r.local.Addr != "" {
-			r.cancelC <- r.local
+		if r.endpoint.Addr != "" {
+			r.cancelC <- r.endpoint
 		}
 		if r.reportT != nil {
 			r.reportT.Stop()
@@ -121,7 +121,7 @@ func (r *Reporter) Keepalive(addr string, weight int, ttl time.Duration) {
 		// Report new endpoint
 		r.reportT = time.NewTicker(ttl)
 		r.reportC = r.reportT.C
-		r.local = Endpoint{
+		r.endpoint = Endpoint{
 			ID:     genrateUniqueID(addr),
 			Addr:   addr,
 			Weight: weight,
@@ -136,8 +136,8 @@ func (r *Reporter) Cancel() {
 	// Preempt
 	r.preempt(func() {
 		// Cancel old endpoint
-		if r.local.Addr != "" {
-			r.cancelC <- r.local
+		if r.endpoint.Addr != "" {
+			r.cancelC <- r.endpoint
 		}
 		if r.reportT != nil {
 			r.reportT.Stop()
@@ -168,7 +168,7 @@ func (r *Reporter) register(ctx context.Context, endpoint Endpoint, ttl time.Dur
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	// Update endpoint
-	return r.matrix.Update(ctx, r.name, endpoint.ID, ttl, endpoint)
+	return r.matrix.Update(ctx, r.srvname, endpoint.ID, ttl, endpoint)
 }
 
 // unregister
@@ -176,5 +176,5 @@ func (r *Reporter) unregister(ctx context.Context, endpoint Endpoint) (err error
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	// Delete endpoint
-	return r.matrix.Delete(ctx, r.name, endpoint.ID)
+	return r.matrix.Delete(ctx, r.srvname, endpoint.ID)
 }

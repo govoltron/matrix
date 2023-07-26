@@ -37,31 +37,30 @@ func TestCluster(t *testing.T) {
 	go func() {
 		time.Sleep(4 * time.Second)
 
+		addrs := make(map[string]int)
 		balance := NewBalancer(broker)
-		for i := 0; i < 20; i++ {
+		for i := 0; i < 10000; i++ {
 			addr := balance.Next()
-			fmt.Printf("addr: %s\n", addr)
-			if addr == "127.0.0.1:8081" {
-				balance.Unhealth(addr)
-			}
-			time.Sleep(time.Second)
+			addrs[addr]++
 		}
+
+		fmt.Printf("Balancer addrs: %+v\n", addrs)
 	}()
 
+	reporter0 := cluster.NewReporter(ctx, "user-core-service")
+	reporter0.Keepalive("127.0.0.1:8080", 100, 2*time.Second)
 	reporter1 := cluster.NewReporter(ctx, "user-core-service")
-	reporter1.Keepalive("127.0.0.1:8080", 100, 2*time.Second)
+	reporter1.Keepalive("127.0.0.1:8081", 100, 2*time.Second)
 	reporter2 := cluster.NewReporter(ctx, "user-core-service")
-	reporter2.Keepalive("127.0.0.1:8081", 300, 2*time.Second)
+	reporter2.Keepalive("127.0.0.1:8082", 100, 2*time.Second)
 	reporter3 := cluster.NewReporter(ctx, "user-core-service")
-	reporter3.Keepalive("127.0.0.1:8082", 200, 2*time.Second)
-	reporter4 := cluster.NewReporter(ctx, "user-core-service")
-	reporter4.Keepalive("127.0.0.1:8083", 100, 2*time.Second)
+	reporter3.Keepalive("127.0.0.1:8083", 1, 2*time.Second)
 
 	defer func() {
+		reporter0.Close()
 		reporter1.Close()
 		reporter2.Close()
 		reporter3.Close()
-		reporter4.Close()
 	}()
 
 	time.Sleep(time.Second * 30)
