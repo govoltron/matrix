@@ -16,7 +16,19 @@ package cluster
 
 import (
 	"sync"
+	"time"
 )
+
+type BalancerOption func(b *Balancer)
+
+// WithBalancerEndpointsCacheInterval
+func WithBalancerEndpointsCacheInterval(interval time.Duration) BalancerOption {
+	return func(b *Balancer) {
+		if interval > 0 {
+			b.interval = interval
+		}
+	}
+}
 
 type node struct {
 	current   int
@@ -25,18 +37,21 @@ type node struct {
 }
 
 type Balancer struct {
-	rss    []*node
-	rsm    map[string]int
-	broker *Broker
-	mu     sync.RWMutex
+	rss      []*node
+	rsm      map[string]int
+	broker   *Broker
+	last     time.Time
+	interval time.Duration
+	mu       sync.RWMutex
 }
 
 // NewBalancer
 func NewBalancer(broker *Broker) (b *Balancer) {
 	b = &Balancer{
-		broker: broker,
-		rss:    make([]*node, 0),
-		rsm:    make(map[string]int),
+		broker:   broker,
+		rss:      make([]*node, 0),
+		rsm:      make(map[string]int),
+		interval: 2 * time.Second,
 	}
 	return
 }
@@ -53,30 +68,50 @@ func (b *Balancer) Next() (addr string) {
 	return b.next()
 }
 
-// Feedback
-func (b *Balancer) Feedback(addr string, healthy bool) {
-	if i, ok := b.rsm[addr]; !ok {
-		return
-	} else if node := b.rss[i]; node != nil {
-		if healthy {
-			node.effective++
-		} else {
-			node.effective--
-		}
+// Unhealth
+func (b *Balancer) Unhealth(addr string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if node, ok := b.node(addr); ok && 0 < node.effective {
+		node.effective = (int)(node.effective / 2)
 	}
+}
+
+// IsDeprecated
+func (b *Balancer) IsDeprecated(addr string) (yes bool) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	_, ok := b.node(addr)
+	return !ok
 }
 
 // update
 func (b *Balancer) update() {
-	if 0 < len(b.rss) {
+	now := time.Now()
+	if 0 < len(b.rss) && now.Sub(b.last) < b.interval {
 		return
 	}
+	// Get endpoints and update
+	var (
+		rss = make([]*node, 0)
+		rsm = make(map[string]int)
+	)
 	for _, endpoint := range b.broker.Endpoints() {
-		b.rss = append(b.rss, &node{endpoint: endpoint, effective: endpoint.Weight})
+		node := &node{
+			endpoint:  endpoint,
+			effective: endpoint.Weight,
+		}
+		if i, ok := b.rsm[endpoint.Addr]; ok {
+			node.current = b.rss[i].current
+			node.effective = b.rss[i].effective
+		}
+		rss = append(rss, node)
 	}
-	for i, node := range b.rss {
-		b.rsm[node.endpoint.Addr] = i
+	for i, node := range rss {
+		rsm[node.endpoint.Addr] = i
 	}
+	// Replace
+	b.rss, b.rsm, b.last = rss, rsm, now
 }
 
 // next
@@ -106,10 +141,12 @@ func (b *Balancer) next() (addr string) {
 	return
 }
 
-// IsDeprecated
-func (b *Balancer) IsDeprecated(addr string) (yes bool) {
-	if _, ok := b.rsm[addr]; !ok {
-		yes = true
+// node
+func (b *Balancer) node(addr string) (node *node, ok bool) {
+	if i, ok1 := b.rsm[addr]; !ok1 {
+		return nil, false
+	} else if i < len(b.rss) {
+		node, ok = b.rss[i], true
 	}
 	return
 }
