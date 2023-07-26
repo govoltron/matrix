@@ -18,42 +18,98 @@ import (
 	"sync"
 )
 
+type node struct {
+	current   int
+	effective int
+	endpoint  Endpoint
+}
+
 type Balancer struct {
-	workers    map[string]Endpoint
-	ready      map[string]Endpoint
-	deprecated map[string]Endpoint
-	broker     *Broker
-	mu         sync.RWMutex
+	rss    []*node
+	rsm    map[string]int
+	broker *Broker
+	mu     sync.RWMutex
 }
 
 // NewBalancer
 func NewBalancer(broker *Broker) (b *Balancer) {
 	b = &Balancer{
-		workers:    make(map[string]Endpoint),
-		ready:      make(map[string]Endpoint),
-		deprecated: make(map[string]Endpoint),
-		broker:     broker,
+		broker: broker,
+		rss:    make([]*node, 0),
+		rsm:    make(map[string]int),
 	}
 	return
 }
 
-// Acquire
-func (b *Balancer) Acquire() (addr string) {
+// Next
+func (b *Balancer) Next() (addr string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
 
-	b.broker.Endpoints()
+	// Update rss
+	b.update()
 
-	var endpoint Endpoint
-	for _, ep := range b.ready {
-		endpoint = ep
-		break
+	// Next
+	return b.next()
+}
+
+// Feedback
+func (b *Balancer) Feedback(addr string, healthy bool) {
+	if i, ok := b.rsm[addr]; !ok {
+		return
+	} else if node := b.rss[i]; node != nil {
+		if healthy {
+			node.effective++
+		} else {
+			node.effective--
+		}
 	}
-	if endpoint.Addr != "" {
-		return endpoint.Addr
+}
+
+// update
+func (b *Balancer) update() {
+	if 0 < len(b.rss) {
+		return
+	}
+	for _, endpoint := range b.broker.Endpoints() {
+		b.rss = append(b.rss, &node{endpoint: endpoint, effective: endpoint.Weight})
+	}
+	for i, node := range b.rss {
+		b.rsm[node.endpoint.Addr] = i
+	}
+}
+
+// next
+func (b *Balancer) next() (addr string) {
+	var (
+		total int
+		best  *node
+	)
+	for i := 0; i < len(b.rss); i++ {
+		node := b.rss[i]
+		total += node.effective
+		node.current += node.effective
+		// -1 when the connection is abnormal,
+		// +1 when the communication is successful
+		if node.effective < node.endpoint.Weight {
+			node.effective++
+		}
+		// Maximum temporary weight node
+		if best == nil || node.current > best.current {
+			best = node
+		}
+	}
+	if best != nil {
+		best.current -= total
+		addr = best.endpoint.Addr
 	}
 	return
 }
 
-// Release
-func (b *Balancer) Release(addr string) {
-
+// IsDeprecated
+func (b *Balancer) IsDeprecated(addr string) (yes bool) {
+	if _, ok := b.rsm[addr]; !ok {
+		yes = true
+	}
+	return
 }

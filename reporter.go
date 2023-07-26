@@ -83,10 +83,10 @@ func (r *Reporter) sync() {
 			return
 		// Report
 		case <-r.reportC:
-			r.register(r.local, r.ttl)
+			r.register(context.TODO(), r.local, r.ttl)
 		// Cancel
 		case ep := <-r.cancelC:
-			r.unregister(ep)
+			r.unregister(context.TODO(), ep)
 		// Preempt
 		case preempt := <-r.preemptC:
 			preempt()
@@ -162,18 +162,18 @@ func (r *Reporter) Close() {
 }
 
 // register
-func (r *Reporter) register(endpoint Endpoint, ttl time.Duration) (err error) {
+func (r *Reporter) register(ctx context.Context, endpoint Endpoint, ttl time.Duration) (err error) {
 	// Update time
 	endpoint.Time = time.Now().Unix()
-	ctx, cancel := context.WithTimeout(r.ctx, r.timeout)
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	// Update endpoint
 	return r.matrix.Update(ctx, r.name, endpoint.ID, ttl, endpoint)
 }
 
 // unregister
-func (r *Reporter) unregister(endpoint Endpoint) (err error) {
-	ctx, cancel := context.WithTimeout(r.ctx, r.timeout)
+func (r *Reporter) unregister(ctx context.Context, endpoint Endpoint) (err error) {
+	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	// Delete endpoint
 	return r.matrix.Delete(ctx, r.name, endpoint.ID)

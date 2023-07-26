@@ -35,24 +35,37 @@ func TestCluster(t *testing.T) {
 	defer broker.Close()
 
 	go func() {
+		time.Sleep(4 * time.Second)
+
+		balance := NewBalancer(broker)
 		for i := 0; i < 10; i++ {
-			fmt.Printf("endpoints: %+v\n", broker.Endpoints())
+			addr := balance.Next()
+			fmt.Printf("addr: %s\n", addr)
+			if addr == "127.0.0.1:8080" {
+				balance.Feedback(addr, false)
+			} else {
+				balance.Feedback(addr, true)
+			}
 			time.Sleep(time.Second)
 		}
 	}()
 
-	reporter := cluster.NewReporter(ctx, "user-core-service")
-	reporter.Keepalive("127.0.0.1:8080", 100, 2*time.Second)
-	time.Sleep(time.Second * 4)
-	reporter.Keepalive("127.0.0.1:8081", 100, 2*time.Second)
-	time.Sleep(time.Second * 10)
-	reporter.Cancel()
-	defer reporter.Close()
+	reporter1 := cluster.NewReporter(ctx, "user-core-service")
+	reporter1.Keepalive("127.0.0.1:8080", 1, 2*time.Second)
+	reporter2 := cluster.NewReporter(ctx, "user-core-service")
+	reporter2.Keepalive("127.0.0.1:8081", 1, 2*time.Second)
+	reporter3 := cluster.NewReporter(ctx, "user-core-service")
+	reporter3.Keepalive("127.0.0.1:8082", 1, 2*time.Second)
+	reporter4 := cluster.NewReporter(ctx, "user-core-service")
+	reporter4.Keepalive("127.0.0.1:8083", 1, 2*time.Second)
 
-	time.Sleep(time.Second * 10)
+	defer func() {
+		reporter1.Close()
+		reporter2.Close()
+		reporter3.Close()
+		reporter4.Close()
+	}()
 
-	balancer := NewBalancer(broker)
-	addr := balancer.Acquire()
-	balancer.Release(addr)
+	time.Sleep(time.Second * 30)
 
 }
