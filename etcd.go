@@ -90,7 +90,7 @@ func (kvs *EtcdKVS) Lookup(ctx context.Context, key string) (values map[string][
 		values = make(map[string][]byte)
 	}
 	for _, kv := range resp.Kvs {
-		values[string(kv.Key[len(key)+1:])] = kv.Value
+		values[string(kv.Key[len(key)+len(kvs.separator):])] = kv.Value
 	}
 	return
 }
@@ -115,7 +115,7 @@ func (kvs *EtcdKVS) Watch(ctx context.Context, key string, watcher KVWatcher) (e
 			case resp := <-wch:
 				for _, ev := range resp.Events {
 					var (
-						field = string(ev.Kv.Key[len(key)+1:])
+						field = string(ev.Kv.Key[len(key)+len(kvs.separator):])
 					)
 					if ev.Type == etcd.EventTypePut {
 						watcher.OnUpdate(field, ev.Kv.Value)
