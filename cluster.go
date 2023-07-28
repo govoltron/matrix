@@ -73,11 +73,7 @@ type MatrixOption func(m *Matrix)
 
 // WithMatrixServiceKeyParser
 func WithMatrixServiceKeyParser(kparser ServiceKeyParser) MatrixOption {
-	return func(m *Matrix) {
-		if kparser != nil {
-			m.kparser = kparser
-		}
-	}
+	return func(m *Matrix) { m.kparser = kparser }
 }
 
 type Matrix struct {
@@ -98,10 +94,11 @@ func NewCluster(ctx context.Context, name string, kvs KVS, opts ...MatrixOption)
 	for _, setOpt := range opts {
 		setOpt(m)
 	}
-	// Key parser
+	// Option: kparser
 	if m.kparser == nil {
 		m.kparser = &defaultServiceKeyParser{}
 	}
+
 	return
 }
 

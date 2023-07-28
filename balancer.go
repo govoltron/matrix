@@ -23,11 +23,7 @@ type BalancerOption func(b *Balancer)
 
 // WithBalancerEndpointsCacheInterval
 func WithBalancerEndpointsCacheInterval(interval time.Duration) BalancerOption {
-	return func(b *Balancer) {
-		if interval > 0 {
-			b.interval = interval
-		}
-	}
+	return func(b *Balancer) { b.interval = interval }
 }
 
 type node struct {
@@ -46,13 +42,21 @@ type Balancer struct {
 }
 
 // NewBalancer
-func NewBalancer(broker *Broker) (b *Balancer) {
+func NewBalancer(broker *Broker, opts ...BalancerOption) (b *Balancer) {
 	b = &Balancer{
-		broker:   broker,
-		rss:      make([]*node, 0),
-		rsm:      make(map[string]int),
-		interval: 5 * time.Second,
+		broker: broker,
+		rss:    make([]*node, 0),
+		rsm:    make(map[string]int),
 	}
+	// Set options
+	for _, setOpt := range opts {
+		setOpt(b)
+	}
+	// Option: interval
+	if b.interval <= 0 {
+		b.interval = 5 * time.Second
+	}
+
 	return
 }
 

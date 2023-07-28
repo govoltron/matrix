@@ -25,11 +25,7 @@ type ReporterOption func(r *Reporter)
 
 // WithReporterTimeout
 func WithReporterTimeout(timeout time.Duration) ReporterOption {
-	return func(r *Reporter) {
-		if timeout > 0 {
-			r.timeout = timeout
-		}
-	}
+	return func(r *Reporter) { r.timeout = timeout }
 }
 
 type Reporter struct {
@@ -59,13 +55,17 @@ func (m *Matrix) NewReporter(ctx context.Context, srvname string, opts ...Report
 		reportC:  nil,
 		cancelC:  make(chan Endpoint, 1),
 		preemptC: make(chan func(), 1),
-		timeout:  50 * time.Millisecond,
 		matrix:   m,
 	}
 	// Set options
 	for _, setOpt := range opts {
 		setOpt(r)
 	}
+	// Option: timeout
+	if r.timeout <= 0 {
+		r.timeout = 50 * time.Millisecond
+	}
+
 	// Context
 	r.ctx, r.cancel = context.WithCancel(ctx)
 	// Sync
@@ -105,10 +105,9 @@ func (r *Reporter) preempt(fun func()) {
 
 // Keepalive
 func (r *Reporter) Keepalive(addr string, weight int, ttl time.Duration) {
-	if ttl <= 0 {
-		panic("TTL must be greater than 0")
+	if ttl < time.Second {
+		panic("TTL must be greater than or equal to 1 second")
 	}
-
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	// Preempt
@@ -123,6 +122,14 @@ func (r *Reporter) Keepalive(addr string, weight int, ttl time.Duration) {
 			r.reportC = nil
 		}
 		// Report new endpoint
+		r.ttl = ttl
+		if r.ttl <= time.Second {
+			ttl = 500 * time.Millisecond
+		} else if r.ttl <= 2*time.Second {
+			ttl = r.ttl - time.Second
+		} else {
+			ttl = r.ttl - 2*time.Second
+		}
 		r.reportT = time.NewTicker(ttl)
 		r.reportC = r.reportT.C
 		r.endpoint = Endpoint{
@@ -130,7 +137,6 @@ func (r *Reporter) Keepalive(addr string, weight int, ttl time.Duration) {
 			Addr:   addr,
 			Weight: weight,
 		}
-		r.ttl = ttl + 3*time.Second
 	})
 }
 
@@ -163,7 +169,13 @@ func (r *Reporter) Close() {
 		r.reportT = nil
 		r.reportC = nil
 	}
-	// TODO Cancel endpoint
+	// Cancel endpoint
+	if r.endpoint.Addr != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
+		defer cancel()
+		// Delete endpoint
+		r.unregister(ctx, r.endpoint)
+	}
 }
 
 // register

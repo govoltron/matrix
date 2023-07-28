@@ -16,6 +16,7 @@ package cluster
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	etcd "go.etcd.io/etcd/client/v3"
@@ -23,55 +24,52 @@ import (
 
 type EtcdKVSOption func(kvs *EtcdKVS)
 
-// WithEtcdDialTimeout
-func WithEtcdDialTimeout(timeout time.Duration) EtcdKVSOption {
-	return func(kvs *EtcdKVS) {
-		if timeout > 0 {
-			kvs.config.DialTimeout = timeout
-		}
-	}
-}
-
 // WithEtcdAuthentication
 func WithEtcdAuthentication(username, password string) EtcdKVSOption {
 	return func(kvs *EtcdKVS) {
-		if username != "" {
-			kvs.config.Username = username
-		}
-		if password != "" {
-			kvs.config.Password = password
-		}
+		kvs.config.Username = username
+		kvs.config.Password = password
 	}
+}
+
+// WithEtcdDialTimeout
+func WithEtcdDialTimeout(timeout time.Duration) EtcdKVSOption {
+	return func(kvs *EtcdKVS) { kvs.config.DialTimeout = timeout }
 }
 
 // WithEtcdKeySeparator
 func WithEtcdKeySeparator(sep string) EtcdKVSOption {
-	return func(kvs *EtcdKVS) {
-		if sep != "" {
-			kvs.separator = sep
-		}
-	}
+	return func(kvs *EtcdKVS) { kvs.separator = sep }
 }
 
 type EtcdKVS struct {
 	config    *etcd.Config
 	client    *etcd.Client
 	separator string
+	leases    map[string]map[int64]etcd.LeaseID
+	mu        sync.RWMutex
 }
 
 // NewEtcdKVS
 func NewEtcdKVS(ctx context.Context, endpoints []string, opts ...EtcdKVSOption) (kvs *EtcdKVS, err error) {
 	kvs = &EtcdKVS{
 		config: &etcd.Config{
-			Context:     ctx,
-			Endpoints:   endpoints,
-			DialTimeout: 50 * time.Millisecond,
+			Context:   ctx,
+			Endpoints: endpoints,
 		},
-		separator: "/",
+		leases: make(map[string]map[int64]etcd.LeaseID),
 	}
 	// Set options
 	for _, setOpt := range opts {
 		setOpt(kvs)
+	}
+	// Option: DialTimeout
+	if kvs.config.DialTimeout <= 0 {
+		kvs.config.DialTimeout = 50 * time.Millisecond
+	}
+	// Option: separator
+	if kvs.separator == "" {
+		kvs.separator = "/"
 	}
 
 	kvs.client, err = etcd.New(*kvs.config)
@@ -153,24 +151,73 @@ func (kvs *EtcdKVS) Update(ctx context.Context, key, field string, ttl time.Dura
 		sec  int64
 		opts []etcd.OpOption
 	)
+	key += kvs.separator + field
 	if ttl > 0 {
 		sec = int64(ttl / time.Second)
 	}
 	if sec > 0 {
-		if resp, err := kvs.client.Grant(ctx, sec); err != nil {
-			return err
+		var (
+			ok      bool
+			leaseID etcd.LeaseID
+		)
+		if leaseID, ok = kvs.getLeaseID(key, sec); !ok {
+			if resp, err := kvs.client.Grant(ctx, sec); err != nil {
+				return err
+			} else {
+				leaseID = resp.ID
+				kvs.setLeaseID(key, sec, resp.ID)
+			}
 		} else {
-			opts = append(opts, etcd.WithLease(resp.ID))
+			if _, err := kvs.client.KeepAliveOnce(ctx, leaseID); err != nil {
+				return err
+			}
 		}
+		opts = append(opts, etcd.WithLease(leaseID))
 	}
-	_, err = kvs.client.Put(ctx, key+kvs.separator+field, string(value), opts...)
+	_, err = kvs.client.Put(ctx, key, string(value), opts...)
 	return
 }
 
 // Delete implements KVS.
 func (kvs *EtcdKVS) Delete(ctx context.Context, key, field string) (err error) {
-	_, err = kvs.client.Delete(ctx, key+kvs.separator+field)
+	key += kvs.separator + field
+	// Delete key
+	_, err = kvs.client.Delete(ctx, key)
+	// Delete leases
+	if leaseIDs, ok := kvs.leases[key]; ok {
+		kvs.mu.Lock()
+		defer func() {
+			delete(kvs.leases, key)
+			kvs.mu.Unlock()
+		}()
+		for sec, leaseID := range leaseIDs {
+			kvs.client.Revoke(ctx, leaseID)
+			delete(kvs.leases[key], sec)
+		}
+	}
 	return
+}
+
+// getLeaseID
+func (kvs *EtcdKVS) getLeaseID(key string, sec int64) (leaseID etcd.LeaseID, ok bool) {
+	kvs.mu.RLock()
+	defer kvs.mu.RUnlock()
+	if leaseIDs, ok1 := kvs.leases[key]; !ok1 {
+		return 0, false
+	} else {
+		leaseID, ok = leaseIDs[sec]
+	}
+	return
+}
+
+// setLeaseID
+func (kvs *EtcdKVS) setLeaseID(key string, sec int64, leaseID etcd.LeaseID) {
+	kvs.mu.Lock()
+	defer kvs.mu.Unlock()
+	if _, ok := kvs.leases[key]; !ok {
+		kvs.leases[key] = make(map[int64]etcd.LeaseID)
+	}
+	kvs.leases[key][sec] = leaseID
 }
 
 // Close implements KVS.
