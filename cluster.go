@@ -102,6 +102,11 @@ func NewCluster(ctx context.Context, name string, kvs KVS, opts ...MatrixOption)
 	return
 }
 
+// Name
+func (m *Matrix) Name() string {
+	return m.name
+}
+
 // GetValues
 func (m *Matrix) GetValues(ctx context.Context, srvname string) (values map[string][]byte, err error) {
 	return m.kvs.Lookup(ctx, m.buildKey(srvname, "/dict"))

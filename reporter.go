@@ -103,6 +103,11 @@ func (r *Reporter) preempt(fun func()) {
 	r.preemptC <- fun
 }
 
+// Name
+func (r *Reporter) Name() string {
+	return r.srvname
+}
+
 // Keepalive
 func (r *Reporter) Keepalive(addr string, weight int, ttl time.Duration) {
 	if ttl < time.Second {

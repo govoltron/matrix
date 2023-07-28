@@ -106,6 +106,11 @@ func (b *Broker) sync() {
 	}
 }
 
+// Name
+func (b *Broker) Name() string {
+	return b.srvname
+}
+
 // Endpoints
 func (b *Broker) Endpoints() (endpoints map[string]Endpoint) {
 	b.mu.RLock()
