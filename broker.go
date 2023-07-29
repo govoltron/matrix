@@ -20,21 +20,16 @@ import (
 	"sync/atomic"
 )
 
-type kv struct {
-	Key   string
-	Value []byte
-}
-
 type Broker struct {
 	srvname   string
+	envs      map[string]string
 	endpoints map[string]Endpoint
-	dict      map[string][]byte
+	updateEC  chan kv
+	deleteEC  chan string
 	updateMC  chan Endpoint
 	deleteMC  chan string
-	updateVC  chan kv
-	deleteVC  chan string
+	kwatcher  *kvWatcher
 	mwatcher  *memberWatcher
-	vwatcher  *valueWatcher
 	ctx       context.Context
 	cancel    context.CancelFunc
 	closed    uint32
@@ -47,32 +42,32 @@ type Broker struct {
 func (m *Matrix) NewBroker(ctx context.Context, srvname string) (b *Broker) {
 	b = &Broker{
 		srvname:   srvname,
+		envs:      make(map[string]string),
 		endpoints: make(map[string]Endpoint),
-		dict:      make(map[string][]byte),
 		updateMC:  make(chan Endpoint, 1),
 		deleteMC:  make(chan string, 1),
-		updateVC:  make(chan kv, 1),
-		deleteVC:  make(chan string, 1),
+		updateEC:  make(chan kv, 1),
+		deleteEC:  make(chan string, 1),
 		matrix:    m,
 	}
 	// Context
 	b.ctx, b.cancel = context.WithCancel(ctx)
 	// Watcher
-	b.mwatcher = &memberWatcher{b}
-	b.vwatcher = &valueWatcher{b}
+	b.kwatcher = &kvWatcher{updateC: b.updateEC, deleteC: b.deleteEC}
+	b.mwatcher = &memberWatcher{updateC: b.updateMC, deleteC: b.deleteMC}
 	// Watch
 	// TODO Fix error
+	_ = b.matrix.Watchenvs(b.ctx, b.srvname, b.kwatcher)
 	_ = b.matrix.WatchMembers(b.ctx, b.srvname, b.mwatcher)
-	_ = b.matrix.WatchValues(b.ctx, b.srvname, b.vwatcher)
-	// Sync
+	// Background goroutine
 	b.wg.Add(1)
-	go b.sync()
+	go b.background()
 
 	return
 }
 
-// sync
-func (b *Broker) sync() {
+// background
+func (b *Broker) background() {
 	defer func() {
 		b.wg.Done()
 	}()
@@ -92,15 +87,15 @@ func (b *Broker) sync() {
 			b.mu.Lock()
 			delete(b.endpoints, member)
 			b.mu.Unlock()
-		// Update value
-		case kv := <-b.updateVC:
+		// Update environment variable
+		case kv := <-b.updateEC:
 			b.mu.Lock()
-			b.dict[kv.Key] = kv.Value
+			b.envs[kv.Key] = string(kv.Value)
 			b.mu.Unlock()
-		// Delete value
-		case key := <-b.deleteVC:
+		// Delete environment variable
+		case key := <-b.deleteEC:
 			b.mu.Lock()
-			delete(b.dict, key)
+			delete(b.envs, key)
 			b.mu.Unlock()
 		}
 	}
@@ -122,12 +117,11 @@ func (b *Broker) Endpoints() (endpoints map[string]Endpoint) {
 	return
 }
 
-// GetValue
-func (b *Broker) GetValue(key string) (value []byte, exists bool) {
+// Getenv returns the environment variable.
+func (b *Broker) Getenv(key string) (value string) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
-	value, exists = b.dict[key]
-	return
+	return b.envs[key]
 }
 
 // Close
@@ -137,52 +131,4 @@ func (b *Broker) Close() {
 	}
 	b.cancel()
 	b.wg.Wait()
-}
-
-type memberWatcher struct {
-	b *Broker
-}
-
-// OnInit implements Watcher.
-func (w *memberWatcher) OnInit(endpoints map[string]Endpoint) {
-	w.b.mu.Lock()
-	defer w.b.mu.Unlock()
-	w.b.endpoints = make(map[string]Endpoint)
-	for member, endpoint := range endpoints {
-		w.b.endpoints[member] = endpoint
-	}
-}
-
-// OnUpdate implements Watcher.
-func (w *memberWatcher) OnUpdate(member string, endpoint Endpoint) {
-	w.b.updateMC <- endpoint
-}
-
-// OnDelete implements Watcher.
-func (w *memberWatcher) OnDelete(member string) {
-	w.b.deleteMC <- member
-}
-
-type valueWatcher struct {
-	b *Broker
-}
-
-// OnInit implements KVWatcher.
-func (w *valueWatcher) OnInit(values map[string][]byte) {
-	w.b.mu.Lock()
-	defer w.b.mu.Unlock()
-	w.b.dict = make(map[string][]byte)
-	for key, value := range values {
-		w.b.dict[key] = value
-	}
-}
-
-// OnUpdate implements KVWatcher.
-func (w *valueWatcher) OnUpdate(key string, value []byte) {
-	w.b.updateVC <- kv{key, value}
-}
-
-// OnDelete implements KVWatcher.
-func (w *valueWatcher) OnDelete(key string) {
-	w.b.deleteVC <- key
 }

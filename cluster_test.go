@@ -65,15 +65,16 @@ func TestCluster(t *testing.T) {
 		reporter3.Close()
 	}()
 
-	cluster.SetValue(ctx, "user-core-service", "options", []byte(`{"user":"root"}`))
+	cluster.Setenv(ctx, Public, "options", `{"user":"root"}`)
+	cluster.Setenv(ctx, "user-core-service", "options", `{"user":"root"}`)
 
 	for i := 0; i < 5; i++ {
-		values, _ := cluster.GetValues(ctx, "user-core-service")
+		values, _ := cluster.Getenv(ctx, "user-core-service", "options")
 		fmt.Printf("v: %+v\n", values)
 		time.Sleep(1 * time.Second)
 	}
 
-	cluster.DeleteValue(ctx, "user-core-service", "options")
+	cluster.Delenv(ctx, "user-core-service", "options")
 
 	time.Sleep(time.Second * 30)
 

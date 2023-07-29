@@ -68,14 +68,15 @@ func (m *Matrix) NewReporter(ctx context.Context, srvname string, opts ...Report
 
 	// Context
 	r.ctx, r.cancel = context.WithCancel(ctx)
-	// Sync
+	// Background goroutine
 	r.wg.Add(1)
-	go r.sync()
+	go r.background()
 
 	return
 }
 
-func (r *Reporter) sync() {
+// background
+func (r *Reporter) background() {
 	defer func() {
 		r.wg.Done()
 	}()
@@ -87,10 +88,10 @@ func (r *Reporter) sync() {
 			return
 		// Report
 		case <-r.reportC:
-			r.register(context.TODO(), r.endpoint, r.ttl)
+			r.register(context.Background(), r.endpoint, r.ttl)
 		// Cancel
 		case ep := <-r.cancelC:
-			r.unregister(context.TODO(), ep)
+			r.unregister(context.Background(), ep)
 		// Preempt
 		case preempt := <-r.preemptC:
 			preempt()
@@ -176,10 +177,7 @@ func (r *Reporter) Close() {
 	}
 	// Cancel endpoint
 	if r.endpoint.Addr != "" {
-		ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
-		defer cancel()
-		// Delete endpoint
-		r.unregister(ctx, r.endpoint)
+		r.unregister(context.Background(), r.endpoint)
 	}
 }
 
