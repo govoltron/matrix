@@ -38,17 +38,11 @@ func WithEtcdDialTimeout(timeout time.Duration) EtcdKVSOption {
 	return func(kvs *EtcdKVS) { kvs.config.DialTimeout = timeout }
 }
 
-// WithEtcdKeySeparator
-func WithEtcdKeySeparator(sep string) EtcdKVSOption {
-	return func(kvs *EtcdKVS) { kvs.separator = sep }
-}
-
 type EtcdKVS struct {
-	config    *etcd.Config
-	client    *etcd.Client
-	separator string
-	leases    map[string]map[int64]etcd.LeaseID
-	mu        sync.RWMutex
+	config *etcd.Config
+	client *etcd.Client
+	leases map[string]map[int64]etcd.LeaseID
+	mu     sync.RWMutex
 }
 
 // NewEtcdKVS
@@ -67,10 +61,6 @@ func NewEtcdKVS(ctx context.Context, endpoints []string, opts ...EtcdKVSOption) 
 	// Option: DialTimeout
 	if kvs.config.DialTimeout <= 0 {
 		kvs.config.DialTimeout = 50 * time.Millisecond
-	}
-	// Option: separator
-	if kvs.separator == "" {
-		kvs.separator = "/"
 	}
 
 	kvs.client, err = etcd.New(*kvs.config)
@@ -91,7 +81,9 @@ func (kvs *EtcdKVS) Range(ctx context.Context, key string) (values map[string][]
 		values = make(map[string][]byte)
 	}
 	for _, kv := range resp.Kvs {
-		values[string(kv.Key[len(key)+len(kvs.separator):])] = kv.Value
+		if len(kv.Key) > len(key) {
+			values[string(kv.Key[len(key)+1:])] = kv.Value
+		}
 	}
 	return
 }
@@ -161,8 +153,11 @@ func (kvs *EtcdKVS) WatchField(ctx context.Context, key string, watcher FVWatche
 			// Watch
 			case resp := <-wch:
 				for _, ev := range resp.Events {
+					if len(ev.Kv.Key) == len(key) {
+						continue
+					}
 					var (
-						field = string(ev.Kv.Key[len(key)+len(kvs.separator):])
+						field = string(ev.Kv.Key[len(key)+1:])
 					)
 					if ev.Type == etcd.EventTypePut {
 						watcher.OnUpdate(field, ev.Kv.Value)

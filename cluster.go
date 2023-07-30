@@ -107,7 +107,7 @@ func NewCluster(ctx context.Context, name string, kvs KVS, opts ...MatrixOption)
 	m.ewatcher = &fvWatcher{update: m.updateEC, delete: m.deleteEC}
 	// Watch
 	// TODO Fix error
-	_ = m.Watch(ctx, m.buildNewKey("env"), m.ewatcher)
+	_ = m.Watch(ctx, m.buildNewKey("/env"), m.ewatcher)
 	// Background goroutine
 	m.wg.Add(1)
 	go m.background()

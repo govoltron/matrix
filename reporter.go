@@ -215,10 +215,10 @@ func (r *Reporter) unregister(ctx context.Context, endpoint Endpoint) (err error
 }
 
 // buildKey
-func (r *Reporter) buildKey(keys ...string) (key string) {
-	key += "/" + strings.TrimPrefix(r.kparser.Resolve(r.srvname), "/")
+func (r *Reporter) buildKey(keys ...string) (newkey string) {
+	newkey += "/" + strings.TrimPrefix(r.kparser.Resolve(r.srvname), "/")
 	for _, key := range keys {
-		key += "/" + key
+		newkey += "/" + key
 	}
 	return
 }

@@ -162,10 +162,10 @@ func (b *Broker) Endpoints() (endpoints []Endpoint) {
 }
 
 // buildKey
-func (b *Broker) buildKey(keys ...string) (key string) {
-	key += "/" + strings.TrimPrefix(b.kparser.Resolve(b.srvname), "/")
+func (b *Broker) buildKey(keys ...string) (newkey string) {
+	newkey += "/" + strings.TrimPrefix(b.kparser.Resolve(b.srvname), "/")
 	for _, key := range keys {
-		key += "/" + key
+		newkey += "/" + key
 	}
 	return
 }
