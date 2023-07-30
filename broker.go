@@ -16,20 +16,29 @@ package cluster
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 )
+
+type BrokerOption func(b *Broker)
+
+// WithBrokerServiceKeyParser
+func WithBrokerServiceKeyParser(kparser ServiceKeyParser) BrokerOption {
+	return func(b *Broker) { b.kparser = kparser }
+}
 
 type Broker struct {
 	srvname   string
 	envs      map[string]string
 	endpoints map[string]Endpoint
-	updateEC  chan kv
+	updateEC  chan fv
 	deleteEC  chan string
 	updateMC  chan Endpoint
 	deleteMC  chan string
-	kwatcher  *kvWatcher
+	ewatcher  *fvWatcher
 	mwatcher  *memberWatcher
+	kparser   ServiceKeyParser
 	ctx       context.Context
 	cancel    context.CancelFunc
 	closed    uint32
@@ -39,26 +48,35 @@ type Broker struct {
 }
 
 // NewBroker
-func (m *Matrix) NewBroker(ctx context.Context, srvname string) (b *Broker) {
+func (m *Matrix) NewBroker(ctx context.Context, srvname string, opts ...BrokerOption) (b *Broker) {
 	b = &Broker{
 		srvname:   srvname,
 		envs:      make(map[string]string),
 		endpoints: make(map[string]Endpoint),
 		updateMC:  make(chan Endpoint, 1),
 		deleteMC:  make(chan string, 1),
-		updateEC:  make(chan kv, 1),
+		updateEC:  make(chan fv, 1),
 		deleteEC:  make(chan string, 1),
 		matrix:    m,
 	}
+	// Set options
+	for _, setOpt := range opts {
+		setOpt(b)
+	}
+	// Option: kparser
+	if b.kparser == nil {
+		b.kparser = &defaultServiceKeyParser{}
+	}
+
 	// Context
 	b.ctx, b.cancel = context.WithCancel(ctx)
 	// Watcher
-	b.kwatcher = &kvWatcher{updateC: b.updateEC, deleteC: b.deleteEC}
-	b.mwatcher = &memberWatcher{updateC: b.updateMC, deleteC: b.deleteMC}
+	b.ewatcher = &fvWatcher{update: b.updateEC, delete: b.deleteEC}
+	b.mwatcher = &memberWatcher{update: b.updateMC, delete: b.deleteMC}
 	// Watch
 	// TODO Fix error
-	_ = b.matrix.Watchenvs(b.ctx, b.srvname, b.kwatcher)
-	_ = b.matrix.WatchMembers(b.ctx, b.srvname, b.mwatcher)
+	_ = b.matrix.Watch(ctx, b.buildKey("env"), b.ewatcher)
+	_ = b.matrix.Watch(b.ctx, b.buildKey("endpoints"), b.mwatcher)
 	// Background goroutine
 	b.wg.Add(1)
 	go b.background()
@@ -88,14 +106,14 @@ func (b *Broker) background() {
 			delete(b.endpoints, member)
 			b.mu.Unlock()
 		// Update environment variable
-		case kv := <-b.updateEC:
+		case fv := <-b.updateEC:
 			b.mu.Lock()
-			b.envs[kv.Key] = string(kv.Value)
+			b.envs[fv.Field] = string(fv.Value)
 			b.mu.Unlock()
 		// Delete environment variable
-		case key := <-b.deleteEC:
+		case field := <-b.deleteEC:
 			b.mu.Lock()
-			delete(b.envs, key)
+			delete(b.envs, field)
 			b.mu.Unlock()
 		}
 	}
@@ -106,22 +124,50 @@ func (b *Broker) Name() string {
 	return b.srvname
 }
 
-// Endpoints
-func (b *Broker) Endpoints() (endpoints map[string]Endpoint) {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	endpoints = make(map[string]Endpoint)
-	for member, endpoint := range b.endpoints {
-		endpoints[member] = endpoint
-	}
-	return
-}
-
 // Getenv returns the environment variable.
 func (b *Broker) Getenv(key string) (value string) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.envs[key]
+}
+
+// Getenv sets the environment variable.
+func (b *Broker) Setenv(ctx context.Context, key, value string) (err error) {
+	b.mu.Lock()
+	defer func() {
+		b.envs[key] = value
+		b.mu.Unlock()
+	}()
+	return b.matrix.Set(ctx, b.buildKey("env", key), []byte(value), 0)
+}
+
+// Delenv deletes the environment variable.
+func (b *Broker) Delenv(ctx context.Context, key string) (err error) {
+	b.mu.Lock()
+	defer func() {
+		delete(b.envs, key)
+		b.mu.Unlock()
+	}()
+	return b.matrix.Delete(ctx, b.buildKey("env", key))
+}
+
+// Endpoints
+func (b *Broker) Endpoints() (endpoints []Endpoint) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	for _, endpoint := range b.endpoints {
+		endpoints = append(endpoints, endpoint)
+	}
+	return
+}
+
+// buildKey
+func (b *Broker) buildKey(keys ...string) (key string) {
+	key += "/" + strings.TrimPrefix(b.kparser.Resolve(b.srvname), "/")
+	for _, key := range keys {
+		key += "/" + key
+	}
+	return
 }
 
 // Close

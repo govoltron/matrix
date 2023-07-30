@@ -20,78 +20,76 @@ type kv struct {
 }
 
 type kvWatcher struct {
-	updateC chan kv
-	deleteC chan string
+	update chan kv
+	delete chan string
 }
 
 // OnInit implements KVWatcher.
-func (w *kvWatcher) OnInit(values map[string][]byte) {
-	for key, value := range values {
-		w.updateC <- kv{key, value}
-	}
+func (w *kvWatcher) OnInit(key string, value []byte) {
+	w.update <- kv{key, value}
 }
 
 // OnUpdate implements KVWatcher.
 func (w *kvWatcher) OnUpdate(key string, value []byte) {
-	w.updateC <- kv{key, value}
+	w.update <- kv{key, value}
 }
 
 // OnDelete implements KVWatcher.
 func (w *kvWatcher) OnDelete(key string) {
-	w.deleteC <- key
+	w.delete <- key
+}
+
+type fv struct {
+	Field string
+	Value []byte
+}
+
+type fvWatcher struct {
+	update chan fv
+	delete chan string
+}
+
+// OnInit implements FVWatcher.
+func (w *fvWatcher) OnInit(values map[string][]byte) {
+	for field, value := range values {
+		w.update <- fv{field, value}
+	}
+}
+
+// OnUpdate implements FVWatcher.
+func (w *fvWatcher) OnUpdate(field string, value []byte) {
+	w.update <- fv{field, value}
+}
+
+// OnDelete implements FVWatcher.
+func (w *fvWatcher) OnDelete(field string) {
+	w.delete <- field
 }
 
 type memberWatcher struct {
-	updateC chan Endpoint
-	deleteC chan string
+	update chan Endpoint
+	delete chan string
 }
 
-// OnInit implements MemberWatcher.
-func (w *memberWatcher) OnInit(endpoints map[string]Endpoint) {
-	for _, endpoint := range endpoints {
-		w.updateC <- endpoint
-	}
-}
-
-// OnUpdate implements MemberWatcher.
-func (w *memberWatcher) OnUpdate(member string, endpoint Endpoint) {
-	w.updateC <- endpoint
-}
-
-// OnDelete implements MemberWatcher.
-func (w *memberWatcher) OnDelete(member string) {
-	w.deleteC <- member
-}
-
-type convertWatcher struct {
-	watcher MemberWatcher
-}
-
-// OnInit implements KVWatcher.
-func (w *convertWatcher) OnInit(values map[string][]byte) {
-	var (
-		endpoints = make(map[string]Endpoint)
-	)
-	for field, value := range values {
+// OnInit implements FVWatcher.
+func (w *memberWatcher) OnInit(values map[string][]byte) {
+	for _, value := range values {
 		var ep Endpoint
 		if err1 := ep.Load(value); err1 == nil {
-			endpoints[field] = ep
+			w.update <- ep
 		}
 	}
-	if len(endpoints) > 0 {
-		w.watcher.OnInit(endpoints)
-	}
 }
 
-// OnUpdate implements KVWatcher.
-func (w *convertWatcher) OnUpdate(field string, value []byte) {
+// OnUpdate implements FVWatcher.
+func (w *memberWatcher) OnUpdate(field string, value []byte) {
 	var ep Endpoint
 	if err := ep.Load(value); err == nil {
-		w.watcher.OnUpdate(field, ep)
+		w.update <- ep
 	}
 }
 
-// OnDelete implements KVWatcher.
-func (w *convertWatcher) OnDelete(field string) {
-	w.watcher.OnDelete(field)
+// OnDelete implements FVWatcher.
+func (w *memberWatcher) OnDelete(field string) {
+	w.delete <- field
 }

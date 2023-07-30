@@ -28,12 +28,12 @@ func TestCluster(t *testing.T) {
 		return
 	}
 
-	cluster := NewCluster(ctx, "cu4k6mg398qd", kvs,
-		WithMatrixServiceKeyParser(&CustomServiceKeyParser{}),
-	)
+	cluster := NewCluster(ctx, "cu4k6mg398qd", kvs)
 	defer cluster.Close(context.TODO())
 
-	broker := cluster.NewBroker(ctx, "user-core-service")
+	broker := cluster.NewBroker(ctx, "user-core-service",
+		WithBrokerServiceKeyParser(&CustomServiceKeyParser{}),
+	)
 	defer broker.Close()
 
 	go func() {
@@ -49,13 +49,13 @@ func TestCluster(t *testing.T) {
 		fmt.Printf("Balancer addrs: %+v\n", addrs)
 	}()
 
-	reporter0 := cluster.NewReporter(ctx, "user-core-service")
+	reporter0 := cluster.NewReporter(ctx, "user-core-service", WithReporterServiceKeyParser(&CustomServiceKeyParser{}))
 	reporter0.Keepalive("127.0.0.1:8080", 100, 2*time.Second)
-	reporter1 := cluster.NewReporter(ctx, "user-core-service")
+	reporter1 := cluster.NewReporter(ctx, "user-core-service", WithReporterServiceKeyParser(&CustomServiceKeyParser{}))
 	reporter1.Keepalive("127.0.0.1:8081", 100, 2*time.Second)
-	reporter2 := cluster.NewReporter(ctx, "user-core-service")
+	reporter2 := cluster.NewReporter(ctx, "user-core-service", WithReporterServiceKeyParser(&CustomServiceKeyParser{}))
 	reporter2.Keepalive("127.0.0.1:8082", 100, 2*time.Second)
-	reporter3 := cluster.NewReporter(ctx, "user-core-service")
+	reporter3 := cluster.NewReporter(ctx, "user-core-service", WithReporterServiceKeyParser(&CustomServiceKeyParser{}))
 	reporter3.Keepalive("127.0.0.1:8083", 1, 2*time.Second)
 
 	defer func() {
@@ -65,16 +65,16 @@ func TestCluster(t *testing.T) {
 		reporter3.Close()
 	}()
 
-	cluster.Setenv(ctx, Public, "options", `{"user":"root"}`)
-	cluster.Setenv(ctx, "user-core-service", "options", `{"user":"root"}`)
+	cluster.Setenv(ctx, "NAME", cluster.Name())
+	broker.Setenv(ctx, "options", `{"username":"root"}`)
 
 	for i := 0; i < 5; i++ {
-		values, _ := cluster.Getenv(ctx, "user-core-service", "options")
-		fmt.Printf("v: %+v\n", values)
+		value := broker.Getenv("options")
+		fmt.Printf("v: %+v\n", value)
 		time.Sleep(1 * time.Second)
 	}
 
-	cluster.Delenv(ctx, "user-core-service", "options")
+	broker.Delenv(ctx, "options")
 
 	time.Sleep(time.Second * 30)
 

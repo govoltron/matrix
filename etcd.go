@@ -16,6 +16,7 @@ package cluster
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"time"
 
@@ -80,8 +81,8 @@ func NewEtcdKVS(ctx context.Context, endpoints []string, opts ...EtcdKVSOption) 
 	return
 }
 
-// Lookup implements KVS.
-func (kvs *EtcdKVS) Lookup(ctx context.Context, key string) (values map[string][]byte, err error) {
+// Range implements KVS.
+func (kvs *EtcdKVS) Range(ctx context.Context, key string) (values map[string][]byte, err error) {
 	resp, err := kvs.client.Get(ctx, key, etcd.WithPrefix())
 	if err != nil {
 		return nil, err
@@ -96,12 +97,58 @@ func (kvs *EtcdKVS) Lookup(ctx context.Context, key string) (values map[string][
 }
 
 // Watch implements KVS.
-func (kvs *EtcdKVS) Watch(ctx context.Context, key string, watcher KVWatcher) (err error) {
-	endpoints, err := kvs.Lookup(ctx, key)
+func (kvs *EtcdKVS) Watch(ctx context.Context, key string, watcher Watcher) (err error) {
+	switch w := watcher.(type) {
+	case KVWatcher:
+		return kvs.WatchKey(ctx, key, w)
+	case FVWatcher:
+		return kvs.WatchField(ctx, key, w)
+	}
+	return errors.New("watcher not supported")
+}
+
+// WatchKey
+func (kvs *EtcdKVS) WatchKey(ctx context.Context, key string, watcher KVWatcher) (err error) {
+	value, err := kvs.Get(ctx, key)
 	if err != nil {
 		return
 	}
-	watcher.OnInit(endpoints)
+	watcher.OnInit(key, value)
+	// Watch
+	wch := kvs.client.Watch(ctx, key)
+	// Goroutine for watch
+	go func() {
+		for {
+			select {
+			// Cancel
+			case <-ctx.Done():
+				return
+			// Watch
+			case resp := <-wch:
+				for _, ev := range resp.Events {
+					if ev.Type == etcd.EventTypePut {
+						watcher.OnUpdate(key, ev.Kv.Value)
+					} else if ev.Type == etcd.EventTypeDelete {
+						watcher.OnDelete(key)
+					}
+				}
+				if resp.Canceled {
+					return
+				}
+			}
+		}
+	}()
+
+	return
+}
+
+// WatchField
+func (kvs *EtcdKVS) WatchField(ctx context.Context, key string, watcher FVWatcher) (err error) {
+	values, err := kvs.Range(ctx, key)
+	if err != nil {
+		return
+	}
+	watcher.OnInit(values)
 	// Watch
 	wch := kvs.client.Watch(ctx, key, etcd.WithPrefix())
 	// Goroutine for watch
@@ -133,9 +180,9 @@ func (kvs *EtcdKVS) Watch(ctx context.Context, key string, watcher KVWatcher) (e
 	return
 }
 
-// Query implements KVS.
-func (kvs *EtcdKVS) Query(ctx context.Context, key, field string) (value []byte, err error) {
-	resp, err := kvs.client.Get(ctx, key+kvs.separator+field)
+// Get implements KVS.
+func (kvs *EtcdKVS) Get(ctx context.Context, key string) (value []byte, err error) {
+	resp, err := kvs.client.Get(ctx, key)
 	if err != nil {
 		return nil, err
 	}
@@ -145,13 +192,12 @@ func (kvs *EtcdKVS) Query(ctx context.Context, key, field string) (value []byte,
 	return resp.Kvs[0].Value, nil
 }
 
-// Update implements KVS.
-func (kvs *EtcdKVS) Update(ctx context.Context, key, field string, ttl time.Duration, value []byte) (err error) {
+// Set implements KVS.
+func (kvs *EtcdKVS) Set(ctx context.Context, key string, value []byte, ttl time.Duration) (err error) {
 	var (
 		sec  int64
 		opts []etcd.OpOption
 	)
-	key += kvs.separator + field
 	if ttl > 0 {
 		sec = int64(ttl / time.Second)
 	}
@@ -179,8 +225,7 @@ func (kvs *EtcdKVS) Update(ctx context.Context, key, field string, ttl time.Dura
 }
 
 // Delete implements KVS.
-func (kvs *EtcdKVS) Delete(ctx context.Context, key, field string) (err error) {
-	key += kvs.separator + field
+func (kvs *EtcdKVS) Delete(ctx context.Context, key string) (err error) {
 	// Delete key
 	_, err = kvs.client.Delete(ctx, key)
 	// Delete leases

@@ -16,6 +16,7 @@ package cluster
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -28,6 +29,11 @@ func WithReporterTimeout(timeout time.Duration) ReporterOption {
 	return func(r *Reporter) { r.timeout = timeout }
 }
 
+// WithReporterServiceKeyParser
+func WithReporterServiceKeyParser(kparser ServiceKeyParser) ReporterOption {
+	return func(r *Reporter) { r.kparser = kparser }
+}
+
 type Reporter struct {
 	srvname  string
 	endpoint Endpoint
@@ -36,6 +42,7 @@ type Reporter struct {
 	preemptC chan func()
 	reportT  *time.Ticker
 	reportC  <-chan time.Time
+	kparser  ServiceKeyParser
 	ctx      context.Context
 	cancel   context.CancelFunc
 	timeout  time.Duration
@@ -64,6 +71,10 @@ func (m *Matrix) NewReporter(ctx context.Context, srvname string, opts ...Report
 	// Option: timeout
 	if r.timeout <= 0 {
 		r.timeout = 50 * time.Millisecond
+	}
+	// Option: kparser
+	if r.kparser == nil {
+		r.kparser = &defaultServiceKeyParser{}
 	}
 
 	// Context
@@ -185,10 +196,14 @@ func (r *Reporter) Close() {
 func (r *Reporter) register(ctx context.Context, endpoint Endpoint, ttl time.Duration) (err error) {
 	// Update time
 	endpoint.Time = time.Now().Unix()
+	value, err := endpoint.Save()
+	if err != nil {
+		return
+	}
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	// Update endpoint
-	return r.matrix.UpdateMember(ctx, r.srvname, endpoint.ID, ttl, endpoint)
+	return r.matrix.Set(ctx, r.buildKey("endpoints", endpoint.ID), value, ttl)
 }
 
 // unregister
@@ -196,5 +211,14 @@ func (r *Reporter) unregister(ctx context.Context, endpoint Endpoint) (err error
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	// Delete endpoint
-	return r.matrix.DeleteMember(ctx, r.srvname, endpoint.ID)
+	return r.matrix.Delete(ctx, r.buildKey("endpoints", endpoint.ID))
+}
+
+// buildKey
+func (r *Reporter) buildKey(keys ...string) (key string) {
+	key += "/" + strings.TrimPrefix(r.kparser.Resolve(r.srvname), "/")
+	for _, key := range keys {
+		key += "/" + key
+	}
+	return
 }

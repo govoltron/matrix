@@ -22,10 +22,6 @@ import (
 	"time"
 )
 
-const (
-	Public string = ""
-)
-
 type Endpoint struct {
 	Time   int64  `json:"time"`
 	ID     string `json:"id"`
@@ -42,18 +38,26 @@ func (e *Endpoint) Save() (b []byte, err error) {
 }
 
 type KVWatcher interface {
+	OnInit(key string, value []byte)
+	OnUpdate(key string, value []byte)
+	OnDelete(key string)
+}
+
+type FVWatcher interface {
 	OnInit(values map[string][]byte)
 	OnUpdate(field string, value []byte)
 	OnDelete(field string)
 }
 
+type Watcher interface{}
+
 // Key Server
 type KVS interface {
-	Lookup(ctx context.Context, key string) (values map[string][]byte, err error)
-	Watch(ctx context.Context, key string, watcher KVWatcher) (err error)
-	Query(ctx context.Context, key, field string) (value []byte, err error)
-	Update(ctx context.Context, key, field string, ttl time.Duration, values []byte) (err error)
-	Delete(ctx context.Context, key, field string) (err error)
+	Watch(ctx context.Context, key string, watcher Watcher) (err error)
+	Range(ctx context.Context, key string) (values map[string][]byte, err error)
+	Get(ctx context.Context, key string) (value []byte, err error)
+	Set(ctx context.Context, key string, value []byte, ttl time.Duration) (err error)
+	Delete(ctx context.Context, key string) (err error)
 	Close(ctx context.Context) (err error)
 }
 
@@ -68,18 +72,7 @@ func (kp *defaultServiceKeyParser) Resolve(srvname string) (key string) {
 	return srvname
 }
 
-type MemberWatcher interface {
-	OnInit(endpoints map[string]Endpoint)
-	OnUpdate(member string, endpoint Endpoint)
-	OnDelete(member string)
-}
-
 type MatrixOption func(m *Matrix)
-
-// WithMatrixServiceKeyParser
-func WithMatrixServiceKeyParser(kparser ServiceKeyParser) MatrixOption {
-	return func(m *Matrix) { m.kparser = kparser }
-}
 
 type Matrix struct {
 	name     string
@@ -87,10 +80,9 @@ type Matrix struct {
 	cancel   context.CancelFunc
 	kvs      KVS
 	envs     map[string]string
-	updateEC chan kv
+	updateEC chan fv
 	deleteEC chan string
-	kwatcher *kvWatcher
-	kparser  ServiceKeyParser
+	ewatcher *fvWatcher
 	mu       sync.RWMutex
 	wg       sync.WaitGroup
 }
@@ -101,24 +93,21 @@ func NewCluster(ctx context.Context, name string, kvs KVS, opts ...MatrixOption)
 		name:     name,
 		kvs:      kvs,
 		envs:     make(map[string]string),
-		updateEC: make(chan kv, 1),
+		updateEC: make(chan fv, 1),
 		deleteEC: make(chan string, 1),
 	}
 	// Set options
 	for _, setOpt := range opts {
 		setOpt(m)
 	}
-	// Option: kparser
-	if m.kparser == nil {
-		m.kparser = &defaultServiceKeyParser{}
-	}
+
 	// Context
 	m.ctx, m.cancel = context.WithCancel(ctx)
 	// Watcher
-	m.kwatcher = &kvWatcher{updateC: m.updateEC, deleteC: m.deleteEC}
+	m.ewatcher = &fvWatcher{update: m.updateEC, delete: m.deleteEC}
 	// Watch
 	// TODO Fix error
-	_ = m.Watchenvs(ctx, Public, m.kwatcher)
+	_ = m.Watch(ctx, m.buildNewKey("env"), m.ewatcher)
 	// Background goroutine
 	m.wg.Add(1)
 	go m.background()
@@ -138,14 +127,14 @@ func (m *Matrix) background() {
 		case <-m.ctx.Done():
 			return
 		// Update environment variable
-		case kv := <-m.updateEC:
+		case fv := <-m.updateEC:
 			m.mu.Lock()
-			m.envs[kv.Key] = string(kv.Value)
+			m.envs[fv.Field] = string(fv.Value)
 			m.mu.Unlock()
 		// Delete environment variable
-		case key := <-m.deleteEC:
+		case field := <-m.deleteEC:
 			m.mu.Lock()
-			delete(m.envs, key)
+			delete(m.envs, field)
 			m.mu.Unlock()
 		}
 	}
@@ -156,103 +145,61 @@ func (m *Matrix) Name() string {
 	return m.name
 }
 
-// Watchenvs
-func (m *Matrix) Watchenvs(ctx context.Context, srvname string, watcher KVWatcher) (err error) {
-	if srvname == Public {
-		return m.kvs.Watch(ctx, m.buildKey("env"), m.kwatcher)
-	}
-	return m.kvs.Watch(ctx, m.buildServiceKey(srvname, "env"), watcher)
-}
-
 // Getenv returns the environment variable.
-func (m *Matrix) Getenv(ctx context.Context, srvname, key string) (value string, err error) {
-	if srvname == Public {
-		m.mu.RLock()
-		defer m.mu.RUnlock()
-		value = m.envs[key]
-	} else if v, err1 := m.kvs.Query(ctx, m.buildServiceKey(srvname, "env"), key); err1 == nil && len(v) > 0 {
-		value, err = string(v), err1
-	}
-	return
+func (m *Matrix) Getenv(ctx context.Context, key string) (value string) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.envs[key]
 }
 
 // Setenv sets the environment variable.
-func (m *Matrix) Setenv(ctx context.Context, srvname, key, value string) (err error) {
-	if srvname == Public {
-		m.mu.Lock()
-		defer func() {
-			m.envs[key] = value
-			m.mu.Unlock()
-		}()
-		return m.kvs.Update(ctx, m.buildKey("env"), key, 0, []byte(value))
-	}
-	return m.kvs.Update(ctx, m.buildServiceKey(srvname, "env"), key, 0, []byte(value))
+func (m *Matrix) Setenv(ctx context.Context, key, value string) (err error) {
+	m.mu.Lock()
+	defer func() {
+		m.envs[key] = value
+		m.mu.Unlock()
+	}()
+	return m.kvs.Set(ctx, m.buildNewKey("/env/"+key), []byte(value), 0)
 }
 
 // Delenv deletes the environment variable.
-func (m *Matrix) Delenv(ctx context.Context, srvname, key string) (err error) {
-	if srvname == Public {
-		m.mu.Lock()
-		defer func() {
-			delete(m.envs, key)
-			m.mu.Unlock()
-		}()
-		return m.kvs.Delete(ctx, m.buildKey("env"), key)
-	}
-	return m.kvs.Delete(ctx, m.buildServiceKey(srvname, "env"), key)
+func (m *Matrix) Delenv(ctx context.Context, key string) (err error) {
+	m.mu.Lock()
+	defer func() {
+		delete(m.envs, key)
+		m.mu.Unlock()
+	}()
+	return m.kvs.Delete(ctx, m.buildNewKey("/env/"+key))
 }
 
-// WatchMembers
-func (m *Matrix) WatchMembers(ctx context.Context, srvname string, watcher MemberWatcher) (err error) {
-	return m.kvs.Watch(ctx, m.buildServiceKey(srvname, "endpoints"), &convertWatcher{watcher})
+// Watch
+func (m *Matrix) Watch(ctx context.Context, key string, watcher Watcher) (err error) {
+	return m.kvs.Watch(ctx, m.buildNewKey(key), watcher)
 }
 
-// GetMembers
-func (m *Matrix) GetMembers(ctx context.Context, srvname string) (endpoints map[string]Endpoint, err error) {
-	values, err := m.kvs.Lookup(ctx, m.buildServiceKey(srvname, "endpoints"))
-	if err != nil {
-		return nil, err
-	}
-	if len(values) > 0 {
-		endpoints = make(map[string]Endpoint)
-	}
-	for member, value := range values {
-		var ep Endpoint
-		if err1 := ep.Load(value); err1 == nil {
-			endpoints[member] = ep
-		}
-	}
-	return
+// Range
+func (m *Matrix) Range(ctx context.Context, key string) (values map[string][]byte, err error) {
+	return m.kvs.Range(ctx, m.buildNewKey(key))
 }
 
-// UpdateMember
-func (m *Matrix) UpdateMember(ctx context.Context, srvname, member string, ttl time.Duration, endpoint Endpoint) (err error) {
-	value, err := endpoint.Save()
-	if err != nil {
-		return err
-	}
-	return m.kvs.Update(ctx, m.buildServiceKey(srvname, "endpoints"), member, ttl, value)
+// Get
+func (m *Matrix) Get(ctx context.Context, key string) (value []byte, err error) {
+	return m.kvs.Get(ctx, m.buildNewKey(key))
 }
 
-// DeleteMember
-func (m *Matrix) DeleteMember(ctx context.Context, srvname, member string) (err error) {
-	return m.kvs.Delete(ctx, m.buildServiceKey(srvname, "endpoints"), member)
+// Set
+func (m *Matrix) Set(ctx context.Context, key string, value []byte, ttl time.Duration) (err error) {
+	return m.kvs.Set(ctx, m.buildNewKey(key), value, ttl)
 }
 
-// buildKey
-func (m *Matrix) buildKey(field string) (key string) {
-	return "/" + m.name + "/" + field
+// Delete
+func (m *Matrix) Delete(ctx context.Context, key string) (err error) {
+	return m.kvs.Delete(ctx, m.buildNewKey(key))
 }
 
-// buildServiceKey
-func (m *Matrix) buildServiceKey(srvname, field string) (key string) {
-	key += "/"
-	key += m.name
-	key += "/"
-	key += strings.TrimPrefix(m.kparser.Resolve(srvname), "/")
-	key += "/"
-	key += field
-	return
+// buildNewKey
+func (m *Matrix) buildNewKey(key string) (newkey string) {
+	return "/" + m.name + "/" + strings.TrimPrefix(key, "/")
 }
 
 // Close
