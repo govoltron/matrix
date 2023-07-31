@@ -203,7 +203,7 @@ func (r *Reporter) register(ctx context.Context, endpoint Endpoint, ttl time.Dur
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	// Update endpoint
-	return r.matrix.Set(ctx, r.buildKey("endpoints", endpoint.ID), value, ttl)
+	return r.matrix.Set(ctx, r.buildKey("/endpoints/"+endpoint.ID), value, ttl)
 }
 
 // unregister
@@ -211,14 +211,10 @@ func (r *Reporter) unregister(ctx context.Context, endpoint Endpoint) (err error
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	// Delete endpoint
-	return r.matrix.Delete(ctx, r.buildKey("endpoints", endpoint.ID))
+	return r.matrix.Delete(ctx, r.buildKey("/endpoints"+endpoint.ID))
 }
 
 // buildKey
-func (r *Reporter) buildKey(keys ...string) (newkey string) {
-	newkey += "/" + strings.TrimPrefix(r.kparser.Resolve(r.srvname), "/")
-	for _, key := range keys {
-		newkey += "/" + key
-	}
-	return
+func (r *Reporter) buildKey(key string) (newkey string) {
+	return "/" + strings.TrimPrefix(r.kparser.Resolve(r.srvname), "/") + "/" + strings.TrimPrefix(key, "/")
 }

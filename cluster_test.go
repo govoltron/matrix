@@ -65,7 +65,7 @@ func TestCluster(t *testing.T) {
 		reporter3.Close()
 	}()
 
-	cluster.Setenv(ctx, "NAME", cluster.Name())
+	cluster.ENV.Set(ctx, "NAME", cluster.Name())
 	broker.Setenv(ctx, "options", `{"username":"root"}`)
 
 	for i := 0; i < 5; i++ {
@@ -75,6 +75,7 @@ func TestCluster(t *testing.T) {
 	}
 
 	broker.Delenv(ctx, "options")
+	cluster.ENV.Delete(ctx, "NAME")
 
 	time.Sleep(time.Second * 30)
 

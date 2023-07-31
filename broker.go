@@ -75,8 +75,8 @@ func (m *Matrix) NewBroker(ctx context.Context, srvname string, opts ...BrokerOp
 	b.mwatcher = &memberWatcher{update: b.updateMC, delete: b.deleteMC}
 	// Watch
 	// TODO Fix error
-	_ = b.matrix.Watch(ctx, b.buildKey("env"), b.ewatcher)
-	_ = b.matrix.Watch(b.ctx, b.buildKey("endpoints"), b.mwatcher)
+	_ = b.matrix.Watch(ctx, b.buildKey("/env"), b.ewatcher)
+	_ = b.matrix.Watch(b.ctx, b.buildKey("/endpoints"), b.mwatcher)
 	// Background goroutine
 	b.wg.Add(1)
 	go b.background()
@@ -138,7 +138,7 @@ func (b *Broker) Setenv(ctx context.Context, key, value string) (err error) {
 		b.envs[key] = value
 		b.mu.Unlock()
 	}()
-	return b.matrix.Set(ctx, b.buildKey("env", key), []byte(value), 0)
+	return b.matrix.Set(ctx, b.buildKey("/env/"+key), []byte(value), 0)
 }
 
 // Delenv deletes the environment variable.
@@ -148,7 +148,7 @@ func (b *Broker) Delenv(ctx context.Context, key string) (err error) {
 		delete(b.envs, key)
 		b.mu.Unlock()
 	}()
-	return b.matrix.Delete(ctx, b.buildKey("env", key))
+	return b.matrix.Delete(ctx, b.buildKey("/env/"+key))
 }
 
 // Endpoints
@@ -162,12 +162,8 @@ func (b *Broker) Endpoints() (endpoints []Endpoint) {
 }
 
 // buildKey
-func (b *Broker) buildKey(keys ...string) (newkey string) {
-	newkey += "/" + strings.TrimPrefix(b.kparser.Resolve(b.srvname), "/")
-	for _, key := range keys {
-		newkey += "/" + key
-	}
-	return
+func (b *Broker) buildKey(key string) (newkey string) {
+	return "/" + strings.TrimPrefix(b.kparser.Resolve(b.srvname), "/") + "/" + strings.TrimPrefix(key, "/")
 }
 
 // Close
