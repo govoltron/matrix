@@ -94,10 +94,15 @@ func NewCluster(ctx context.Context, name string, kvs KVS, opts ...MatrixOption)
 
 	// Context
 	m.ctx, m.cancel = context.WithCancel(ctx)
-	// 1. Environment variables
+	// Initialize matrix
 	m.init()
 
 	return
+}
+
+// init
+func (m *Matrix) init() {
+	m.initEnv()
 }
 
 // Name

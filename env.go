@@ -31,8 +31,8 @@ type ENV struct {
 	matrix   *Matrix
 }
 
-// initEnv
-func (m *Matrix) init() {
+// initEnv initializes environment variables.
+func (m *Matrix) initEnv() {
 	e := &ENV{
 		envs:     make(map[string]string),
 		updateEC: make(chan fv, 1),
