@@ -33,24 +33,22 @@ type ENV struct {
 
 // initEnv initializes environment variables.
 func (m *Matrix) initEnv() {
-	e := &ENV{
+	m.ENV = &ENV{
 		envs:     make(map[string]string),
 		updateEC: make(chan fv, 1),
 		deleteEC: make(chan string, 1),
 		matrix:   m,
 	}
 	// Context
-	e.ctx, e.cancel = context.WithCancel(m.ctx)
+	m.ENV.ctx, m.ENV.cancel = context.WithCancel(m.ctx)
 	// Watcher
-	e.ewatcher = &fvWatcher{update: e.updateEC, delete: e.deleteEC}
+	m.ENV.ewatcher = &fvWatcher{update: m.ENV.updateEC, delete: m.ENV.deleteEC}
 	// Watch
 	// TODO Fix error
-	_ = m.Watch(m.ctx, "/env", e.ewatcher)
+	m.Watch(m.ctx, "/env", m.ENV.ewatcher)
 	// Background goroutine
-	e.wg.Add(1)
-	go e.background()
-
-	m.ENV = e
+	m.ENV.wg.Add(1)
+	go m.ENV.background()
 }
 
 // background

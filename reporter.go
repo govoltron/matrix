@@ -70,7 +70,7 @@ func (m *Matrix) NewReporter(ctx context.Context, srvname string, opts ...Report
 	}
 	// Option: timeout
 	if r.timeout <= 0 {
-		r.timeout = 50 * time.Millisecond
+		r.timeout = 100 * time.Millisecond
 	}
 	// Option: kparser
 	if r.kparser == nil {

@@ -75,8 +75,8 @@ func (m *Matrix) NewBroker(ctx context.Context, srvname string, opts ...BrokerOp
 	b.mwatcher = &memberWatcher{update: b.updateMC, delete: b.deleteMC}
 	// Watch
 	// TODO Fix error
-	_ = b.matrix.Watch(ctx, b.buildKey("/env"), b.ewatcher)
-	_ = b.matrix.Watch(b.ctx, b.buildKey("/endpoints"), b.mwatcher)
+	b.matrix.Watch(ctx, b.buildKey("/env"), b.ewatcher)
+	b.matrix.Watch(b.ctx, b.buildKey("/endpoints"), b.mwatcher)
 	// Background goroutine
 	b.wg.Add(1)
 	go b.background()
@@ -95,16 +95,6 @@ func (b *Broker) background() {
 		// Done
 		case <-b.ctx.Done():
 			return
-		// Update endpoint
-		case endpoint := <-b.updateMC:
-			b.mu.Lock()
-			b.endpoints[endpoint.ID] = endpoint
-			b.mu.Unlock()
-		// Delete endpoint
-		case member := <-b.deleteMC:
-			b.mu.Lock()
-			delete(b.endpoints, member)
-			b.mu.Unlock()
 		// Update environment variable
 		case fv := <-b.updateEC:
 			b.mu.Lock()
@@ -114,6 +104,16 @@ func (b *Broker) background() {
 		case field := <-b.deleteEC:
 			b.mu.Lock()
 			delete(b.envs, field)
+			b.mu.Unlock()
+		// Update endpoint
+		case endpoint := <-b.updateMC:
+			b.mu.Lock()
+			b.endpoints[endpoint.ID] = endpoint
+			b.mu.Unlock()
+		// Delete endpoint
+		case member := <-b.deleteMC:
+			b.mu.Lock()
+			delete(b.endpoints, member)
 			b.mu.Unlock()
 		}
 	}
