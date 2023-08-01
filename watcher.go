@@ -14,31 +14,6 @@
 
 package cluster
 
-type kv struct {
-	Key   string
-	Value []byte
-}
-
-type kvWatcher struct {
-	update chan kv
-	delete chan string
-}
-
-// OnInit implements KVWatcher.
-func (w *kvWatcher) OnInit(key string, value []byte) {
-	w.update <- kv{key, value}
-}
-
-// OnUpdate implements KVWatcher.
-func (w *kvWatcher) OnUpdate(key string, value []byte) {
-	w.update <- kv{key, value}
-}
-
-// OnDelete implements KVWatcher.
-func (w *kvWatcher) OnDelete(key string) {
-	w.delete <- key
-}
-
 type fv struct {
 	Field string
 	Value []byte

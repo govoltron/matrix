@@ -19,21 +19,35 @@ func (kp *CustomServiceKeyParser) Resolve(srvname string) (key string) {
 	return fmt.Sprintf("/unknown/%s", srvname)
 }
 
-func TestCluster(t *testing.T) {
-	ctx := context.TODO()
+var (
+	ctx     = context.Background()
+	cluster = (*Matrix)(nil)
+	kparser = &CustomServiceKeyParser{}
+)
 
+// TestMain
+func TestMain(m *testing.M) {
 	kvs, err := NewEtcdKVS(ctx, []string{"127.0.0.1:2379"})
 	if err != nil {
-		t.Errorf("NewEtcdKVS failed, error is %s", err.Error())
+		panic(err)
+	}
+	cluster, err = NewCluster(ctx, "cu4k6mg398qd", kvs)
+	if err != nil {
+		panic(err)
+	}
+	defer cluster.Close(ctx)
+	// Run
+	m.Run()
+}
+
+func TestCluster(t *testing.T) {
+	broker, err := cluster.NewBroker(ctx, "user-core-service",
+		WithBrokerServiceKeyParser(kparser),
+	)
+	if err != nil {
+		t.Errorf("NewBroker failed, error is %s", err.Error())
 		return
 	}
-
-	cluster := NewCluster(ctx, "cu4k6mg398qd", kvs)
-	defer cluster.Close(context.TODO())
-
-	broker := cluster.NewBroker(ctx, "user-core-service",
-		WithBrokerServiceKeyParser(&CustomServiceKeyParser{}),
-	)
 	defer broker.Close()
 
 	go func() {
@@ -46,37 +60,56 @@ func TestCluster(t *testing.T) {
 			addrs[addr]++
 		}
 
-		fmt.Printf("Balancer addrs: %+v\n", addrs)
+		t.Logf("Balancer addrs: %+v\n", addrs)
 	}()
 
-	reporter0 := cluster.NewReporter(ctx, "user-core-service", WithReporterServiceKeyParser(&CustomServiceKeyParser{}))
+	reporter0 := cluster.NewReporter(ctx, "user-core-service", WithReporterServiceKeyParser(kparser))
+	defer reporter0.Close()
 	reporter0.Keepalive("127.0.0.1:8080", 100, 2*time.Second)
-	reporter1 := cluster.NewReporter(ctx, "user-core-service", WithReporterServiceKeyParser(&CustomServiceKeyParser{}))
+
+	reporter1 := cluster.NewReporter(ctx, "user-core-service", WithReporterServiceKeyParser(kparser))
+	defer reporter1.Close()
 	reporter1.Keepalive("127.0.0.1:8081", 100, 2*time.Second)
-	reporter2 := cluster.NewReporter(ctx, "user-core-service", WithReporterServiceKeyParser(&CustomServiceKeyParser{}))
+
+	reporter2 := cluster.NewReporter(ctx, "user-core-service", WithReporterServiceKeyParser(kparser))
+	defer reporter2.Close()
 	reporter2.Keepalive("127.0.0.1:8082", 100, 2*time.Second)
-	reporter3 := cluster.NewReporter(ctx, "user-core-service", WithReporterServiceKeyParser(&CustomServiceKeyParser{}))
+
+	reporter3 := cluster.NewReporter(ctx, "user-core-service", WithReporterServiceKeyParser(kparser))
+	defer reporter3.Close()
 	reporter3.Keepalive("127.0.0.1:8083", 1, 2*time.Second)
 
-	defer func() {
-		reporter0.Close()
-		reporter1.Close()
-		reporter2.Close()
-		reporter3.Close()
-	}()
-
-	cluster.ENV.Set(ctx, "NAME", cluster.Name())
+	cluster.Setenv(ctx, "NAME", cluster.Name())
 	broker.Setenv(ctx, "options", `{"username":"root"}`)
 
 	for i := 0; i < 5; i++ {
-		value := broker.Getenv("options")
-		fmt.Printf("v: %+v\n", value)
+		value := broker.Getenv(ctx, "options")
+		t.Logf("v: %+v\n", value)
 		time.Sleep(1 * time.Second)
 	}
 
 	broker.Delenv(ctx, "options")
-	cluster.ENV.Delete(ctx, "NAME")
+	cluster.Delenv(ctx, "NAME")
 
 	time.Sleep(time.Second * 30)
 
+}
+
+func TestCluster_ENV(t *testing.T) {
+	if err := cluster.Setenv(ctx, "unittest", "1"); err != nil {
+		t.Errorf("Setenv failed, error is %s", err.Error())
+		return
+	}
+	if value := cluster.Getenv(ctx, "unittest"); value != "1" {
+		t.Errorf("Getenv failed, unexpected result: %s", value)
+		return
+	}
+	if err := cluster.Delenv(ctx, "unittest"); err != nil {
+		t.Errorf("Delenv failed, error is %s", err.Error())
+		return
+	}
+	if value := cluster.Getenv(ctx, "unittest"); value != "" {
+		t.Errorf("Getenv failed, unexpected result: %s", value)
+		return
+	}
 }

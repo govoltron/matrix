@@ -174,24 +174,6 @@ func (r *Reporter) Cancel() {
 	})
 }
 
-// Close
-func (r *Reporter) Close() {
-	if !atomic.CompareAndSwapUint32(&r.closed, 0, 1) {
-		return
-	}
-	r.cancel()
-	r.wg.Wait()
-	if r.reportT != nil {
-		r.reportT.Stop()
-		r.reportT = nil
-		r.reportC = nil
-	}
-	// Cancel endpoint
-	if r.endpoint.Addr != "" {
-		r.unregister(context.Background(), r.endpoint)
-	}
-}
-
 // register
 func (r *Reporter) register(ctx context.Context, endpoint Endpoint, ttl time.Duration) (err error) {
 	// Update time
@@ -217,4 +199,22 @@ func (r *Reporter) unregister(ctx context.Context, endpoint Endpoint) (err error
 // buildKey
 func (r *Reporter) buildKey(key string) (newkey string) {
 	return "/" + strings.TrimPrefix(r.kparser.Resolve(r.srvname), "/") + "/" + strings.TrimPrefix(key, "/")
+}
+
+// Close
+func (r *Reporter) Close() {
+	if !atomic.CompareAndSwapUint32(&r.closed, 0, 1) {
+		return
+	}
+	r.cancel()
+	r.wg.Wait()
+	// Cancel endpoint
+	if r.endpoint.Addr != "" {
+		r.unregister(context.Background(), r.endpoint)
+	}
+	if r.reportT != nil {
+		r.reportT.Stop()
+		r.reportT = nil
+		r.reportC = nil
+	}
 }

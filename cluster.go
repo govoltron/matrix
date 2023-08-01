@@ -16,25 +16,10 @@ package cluster
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
+	"sync"
 	"time"
 )
-
-type Endpoint struct {
-	Time   int64  `json:"time"`
-	ID     string `json:"id"`
-	Addr   string `json:"addr"`
-	Weight int    `json:"weight"`
-}
-
-func (e *Endpoint) Load(b []byte) (err error) {
-	return json.Unmarshal(b, e)
-}
-
-func (e *Endpoint) Save() (b []byte, err error) {
-	return json.Marshal(e)
-}
 
 type KVWatcher interface {
 	OnInit(key string, value []byte)
@@ -60,32 +45,29 @@ type KVS interface {
 	Close(ctx context.Context) (err error)
 }
 
-type ServiceKeyParser interface {
-	Resolve(name string) (key string)
-}
-
-type defaultServiceKeyParser struct {
-}
-
-func (kp *defaultServiceKeyParser) Resolve(srvname string) (key string) {
-	return srvname
-}
-
-type MatrixOption func(m *Matrix)
+type ClusterOption func(m *Matrix)
 
 type Matrix struct {
-	name   string
-	ctx    context.Context
-	cancel context.CancelFunc
-	kvs    KVS
-	ENV    *ENV
+	name     string
+	envs     map[string]string
+	updateEC chan fv
+	deleteEC chan string
+	ewatcher *fvWatcher
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
+	mu       sync.RWMutex
+	kvs      KVS
 }
 
-// NewCluster returns a new matrix.
-func NewCluster(ctx context.Context, name string, kvs KVS, opts ...MatrixOption) (m *Matrix) {
+// NewCluster returns a new cluster.
+func NewCluster(ctx context.Context, name string, kvs KVS, opts ...ClusterOption) (m *Matrix, err error) {
 	m = &Matrix{
-		name: name,
-		kvs:  kvs,
+		name:     name,
+		envs:     make(map[string]string),
+		updateEC: make(chan fv, 1),
+		deleteEC: make(chan string, 1),
+		kvs:      kvs,
 	}
 	// Set options
 	for _, setOpt := range opts {
@@ -94,20 +76,74 @@ func NewCluster(ctx context.Context, name string, kvs KVS, opts ...MatrixOption)
 
 	// Context
 	m.ctx, m.cancel = context.WithCancel(ctx)
-	// Initialize matrix
-	m.init()
+	// Watcher
+	m.ewatcher = &fvWatcher{update: m.updateEC, delete: m.deleteEC}
+	// Watch
+	if err = m.kvs.Watch(m.ctx, m.buildKey("/env"), m.ewatcher); err != nil {
+		return nil, err
+	}
+	// Background goroutine
+	m.wg.Add(1)
+	go m.background()
 
 	return
 }
 
-// init
-func (m *Matrix) init() {
-	m.initEnv()
+// background
+func (m *Matrix) background() {
+	defer func() {
+		m.wg.Done()
+	}()
+
+	for {
+		select {
+		// Done
+		case <-m.ctx.Done():
+			return
+		// Update environment variable
+		case fv := <-m.updateEC:
+			m.mu.Lock()
+			m.envs[fv.Field] = string(fv.Value)
+			m.mu.Unlock()
+		// Delete environment variable
+		case field := <-m.deleteEC:
+			m.mu.Lock()
+			delete(m.envs, field)
+			m.mu.Unlock()
+		}
+	}
 }
 
 // Name
 func (m *Matrix) Name() string {
 	return m.name
+}
+
+// Getenv returns the environment variable.
+func (m *Matrix) Getenv(_ context.Context, key string) (value string) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.envs[key]
+}
+
+// Getenv sets the environment variable.
+func (m *Matrix) Setenv(ctx context.Context, key, value string) (err error) {
+	m.mu.Lock()
+	defer func() {
+		m.envs[key] = value
+		m.mu.Unlock()
+	}()
+	return m.kvs.Set(ctx, m.buildKey("/env/"+key), []byte(value), 0)
+}
+
+// Delenv deletes the environment variable.
+func (m *Matrix) Delenv(ctx context.Context, key string) (err error) {
+	m.mu.Lock()
+	defer func() {
+		delete(m.envs, key)
+		m.mu.Unlock()
+	}()
+	return m.kvs.Delete(ctx, m.buildKey("/env/"+key))
 }
 
 // Watch
@@ -142,7 +178,7 @@ func (m *Matrix) buildKey(key string) (newkey string) {
 
 // Close
 func (m *Matrix) Close(ctx context.Context) (err error) {
-	m.ENV.close(ctx)
 	m.cancel()
+	m.wg.Wait()
 	return m.kvs.Close(ctx)
 }

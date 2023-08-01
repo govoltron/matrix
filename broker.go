@@ -48,7 +48,7 @@ type Broker struct {
 }
 
 // NewBroker
-func (m *Matrix) NewBroker(ctx context.Context, srvname string, opts ...BrokerOption) (b *Broker) {
+func (m *Matrix) NewBroker(ctx context.Context, srvname string, opts ...BrokerOption) (b *Broker, err error) {
 	b = &Broker{
 		srvname:   srvname,
 		envs:      make(map[string]string),
@@ -74,9 +74,12 @@ func (m *Matrix) NewBroker(ctx context.Context, srvname string, opts ...BrokerOp
 	b.ewatcher = &fvWatcher{update: b.updateEC, delete: b.deleteEC}
 	b.mwatcher = &memberWatcher{update: b.updateMC, delete: b.deleteMC}
 	// Watch
-	// TODO Fix error
-	b.matrix.Watch(ctx, b.buildKey("/env"), b.ewatcher)
-	b.matrix.Watch(b.ctx, b.buildKey("/endpoints"), b.mwatcher)
+	if err = b.matrix.Watch(ctx, b.buildKey("/env"), b.ewatcher); err != nil {
+		return nil, err
+	}
+	if err = b.matrix.Watch(b.ctx, b.buildKey("/endpoints"), b.mwatcher); err != nil {
+		return nil, err
+	}
 	// Background goroutine
 	b.wg.Add(1)
 	go b.background()
@@ -125,7 +128,7 @@ func (b *Broker) Name() string {
 }
 
 // Getenv returns the environment variable.
-func (b *Broker) Getenv(key string) (value string) {
+func (b *Broker) Getenv(_ context.Context, key string) (value string) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.envs[key]
