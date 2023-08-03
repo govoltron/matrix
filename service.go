@@ -87,6 +87,9 @@ func (m *Matrix) NewService(ctx context.Context, srvname string, opts ...Service
 
 	// Context
 	srv.ctx, srv.cancel = context.WithCancel(ctx)
+	// Background goroutine
+	srv.wg.Add(1)
+	go srv.background()
 	// Watcher
 	srv.ewatcher = &fvWatcher{update: srv.updateEC, delete: srv.deleteEC}
 	srv.mwatcher = &memberWatcher{update: srv.updateMC, delete: srv.deleteMC}
@@ -97,9 +100,6 @@ func (m *Matrix) NewService(ctx context.Context, srvname string, opts ...Service
 	if err = srv.matrix.Watch(srv.ctx, srv.buildKey("/endpoints"), srv.mwatcher); err != nil {
 		return nil, err
 	}
-	// Background goroutine
-	srv.wg.Add(1)
-	go srv.background()
 
 	return
 }

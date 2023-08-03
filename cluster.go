@@ -78,15 +78,15 @@ func NewMatrix(ctx context.Context, name string, kvs KVS, opts ...MatrixOption) 
 
 	// Context
 	m.ctx, m.cancel = context.WithCancel(ctx)
+	// Background goroutine
+	m.wg.Add(1)
+	go m.background()
 	// Watcher
 	m.ewatcher = &fvWatcher{update: m.updateEC, delete: m.deleteEC}
 	// Watch
 	if err = m.kvs.Watch(m.ctx, m.buildKey("/env"), m.ewatcher); err != nil {
 		return nil, err
 	}
-	// Background goroutine
-	m.wg.Add(1)
-	go m.background()
 
 	return
 }

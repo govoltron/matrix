@@ -61,6 +61,9 @@ func (m *Matrix) NewBroker(ctx context.Context, srvname string, opts ...BrokerOp
 
 	// Context
 	b.ctx, b.cancel = context.WithCancel(ctx)
+	// Background goroutine
+	b.wg.Add(1)
+	go b.background()
 	// Watcher
 	b.ewatcher = &fvWatcher{update: b.updateEC, delete: b.deleteEC}
 	b.mwatcher = &memberWatcher{update: b.updateMC, delete: b.deleteMC}
@@ -71,9 +74,6 @@ func (m *Matrix) NewBroker(ctx context.Context, srvname string, opts ...BrokerOp
 	if err = b.matrix.Watch(b.ctx, b.buildKey("/endpoints"), b.mwatcher); err != nil {
 		return nil, err
 	}
-	// Background goroutine
-	b.wg.Add(1)
-	go b.background()
 
 	return
 }

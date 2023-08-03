@@ -71,7 +71,7 @@ func TestCluster(t *testing.T) {
 	reporter3.Keepalive("127.0.0.1:8083", 1, 2*time.Second)
 
 	cluster.Setenv(ctx, "NAME", cluster.Name())
-	srv.Setenv(ctx, "options", `{"username":"root"}`)
+	srv.Setenv(ctx, "options", `{"username":"root","retry_count":99}`)
 
 	for i := 0; i < 5; i++ {
 		value := broker.Getenv(ctx, "options")
