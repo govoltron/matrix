@@ -69,9 +69,11 @@ func (m *Matrix) NewBroker(ctx context.Context, srvname string, opts ...BrokerOp
 	b.mwatcher = &memberWatcher{update: b.updateMC, delete: b.deleteMC}
 	// Watch
 	if err = b.matrix.Watch(ctx, b.buildKey("/env"), b.ewatcher); err != nil {
+		b.cancel()
 		return nil, err
 	}
 	if err = b.matrix.Watch(b.ctx, b.buildKey("/endpoints"), b.mwatcher); err != nil {
+		b.cancel()
 		return nil, err
 	}
 

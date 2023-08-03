@@ -95,9 +95,11 @@ func (m *Matrix) NewService(ctx context.Context, srvname string, opts ...Service
 	srv.mwatcher = &memberWatcher{update: srv.updateMC, delete: srv.deleteMC}
 	// Watch
 	if err = srv.matrix.Watch(ctx, srv.buildKey("/env"), srv.ewatcher); err != nil {
+		srv.cancel()
 		return nil, err
 	}
 	if err = srv.matrix.Watch(srv.ctx, srv.buildKey("/endpoints"), srv.mwatcher); err != nil {
+		srv.cancel()
 		return nil, err
 	}
 

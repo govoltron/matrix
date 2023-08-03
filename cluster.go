@@ -85,6 +85,7 @@ func NewMatrix(ctx context.Context, name string, kvs KVS, opts ...MatrixOption) 
 	m.ewatcher = &fvWatcher{update: m.updateEC, delete: m.deleteEC}
 	// Watch
 	if err = m.kvs.Watch(m.ctx, m.buildKey("/env"), m.ewatcher); err != nil {
+		m.cancel()
 		return nil, err
 	}
 
