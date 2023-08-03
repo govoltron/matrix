@@ -18,6 +18,7 @@ import (
 	"context"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -45,7 +46,7 @@ type KVS interface {
 	Close(ctx context.Context) (err error)
 }
 
-type ClusterOption func(m *Matrix)
+type MatrixOption func(m *Matrix)
 
 type Matrix struct {
 	name     string
@@ -55,13 +56,14 @@ type Matrix struct {
 	ewatcher *fvWatcher
 	ctx      context.Context
 	cancel   context.CancelFunc
+	closed   uint32
 	wg       sync.WaitGroup
 	mu       sync.RWMutex
 	kvs      KVS
 }
 
-// NewCluster returns a new cluster.
-func NewCluster(ctx context.Context, name string, kvs KVS, opts ...ClusterOption) (m *Matrix, err error) {
+// NewMatrix returns a new cluster.
+func NewMatrix(ctx context.Context, name string, kvs KVS, opts ...MatrixOption) (m *Matrix, err error) {
 	m = &Matrix{
 		name:     name,
 		envs:     make(map[string]string),
@@ -173,11 +175,14 @@ func (m *Matrix) Delete(ctx context.Context, key string) (err error) {
 
 // buildKey
 func (m *Matrix) buildKey(key string) (newkey string) {
-	return "/" + m.name + "/" + strings.TrimPrefix(key, "/")
+	return "/" + m.name + "/" + strings.Trim(key, "/")
 }
 
 // Close
 func (m *Matrix) Close(ctx context.Context) (err error) {
+	if !atomic.CompareAndSwapUint32(&m.closed, 0, 1) {
+		return
+	}
 	m.cancel()
 	m.wg.Wait()
 	return m.kvs.Close(ctx)

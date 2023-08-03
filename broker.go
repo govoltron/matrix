@@ -16,20 +16,14 @@ package cluster
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"sync/atomic"
 )
 
 type BrokerOption func(b *Broker)
 
-// WithBrokerServiceKeyParser
-func WithBrokerServiceKeyParser(kparser ServiceKeyParser) BrokerOption {
-	return func(b *Broker) { b.kparser = kparser }
-}
-
 type Broker struct {
-	srvname   string
+	srvbase
 	envs      map[string]string
 	endpoints map[string]Endpoint
 	updateEC  chan fv
@@ -38,7 +32,6 @@ type Broker struct {
 	deleteMC  chan string
 	ewatcher  *fvWatcher
 	mwatcher  *memberWatcher
-	kparser   ServiceKeyParser
 	ctx       context.Context
 	cancel    context.CancelFunc
 	closed    uint32
@@ -50,7 +43,9 @@ type Broker struct {
 // NewBroker
 func (m *Matrix) NewBroker(ctx context.Context, srvname string, opts ...BrokerOption) (b *Broker, err error) {
 	b = &Broker{
-		srvname:   srvname,
+		srvbase: srvbase{
+			name: srvname,
+		},
 		envs:      make(map[string]string),
 		endpoints: make(map[string]Endpoint),
 		updateMC:  make(chan Endpoint, 1),
@@ -62,10 +57,6 @@ func (m *Matrix) NewBroker(ctx context.Context, srvname string, opts ...BrokerOp
 	// Set options
 	for _, setOpt := range opts {
 		setOpt(b)
-	}
-	// Option: kparser
-	if b.kparser == nil {
-		b.kparser = &defaultServiceKeyParser{}
 	}
 
 	// Context
@@ -124,7 +115,7 @@ func (b *Broker) background() {
 
 // Name
 func (b *Broker) Name() string {
-	return b.srvname
+	return b.name
 }
 
 // Getenv returns the environment variable.
@@ -132,26 +123,6 @@ func (b *Broker) Getenv(_ context.Context, key string) (value string) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.envs[key]
-}
-
-// Getenv sets the environment variable.
-func (b *Broker) Setenv(ctx context.Context, key, value string) (err error) {
-	b.mu.Lock()
-	defer func() {
-		b.envs[key] = value
-		b.mu.Unlock()
-	}()
-	return b.matrix.Set(ctx, b.buildKey("/env/"+key), []byte(value), 0)
-}
-
-// Delenv deletes the environment variable.
-func (b *Broker) Delenv(ctx context.Context, key string) (err error) {
-	b.mu.Lock()
-	defer func() {
-		delete(b.envs, key)
-		b.mu.Unlock()
-	}()
-	return b.matrix.Delete(ctx, b.buildKey("/env/"+key))
 }
 
 // Endpoints
@@ -162,11 +133,6 @@ func (b *Broker) Endpoints() (endpoints []Endpoint) {
 		endpoints = append(endpoints, endpoint)
 	}
 	return
-}
-
-// buildKey
-func (b *Broker) buildKey(key string) (newkey string) {
-	return "/" + strings.TrimPrefix(b.kparser.Resolve(b.srvname), "/") + "/" + strings.TrimPrefix(key, "/")
 }
 
 // Close

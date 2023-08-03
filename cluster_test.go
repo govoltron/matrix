@@ -2,27 +2,13 @@ package cluster
 
 import (
 	"context"
-	"fmt"
-	"strings"
 	"testing"
 	"time"
 )
 
-type CustomServiceKeyParser struct{}
-
-// Resolve implements KeyParser.
-func (kp *CustomServiceKeyParser) Resolve(srvname string) (key string) {
-	switch {
-	case strings.HasSuffix(srvname, "-service"):
-		return fmt.Sprintf("/services/%s", srvname[0:len(srvname)-8])
-	}
-	return fmt.Sprintf("/unknown/%s", srvname)
-}
-
 var (
 	ctx     = context.Background()
 	cluster = (*Matrix)(nil)
-	kparser = &CustomServiceKeyParser{}
 )
 
 // TestMain
@@ -31,7 +17,7 @@ func TestMain(m *testing.M) {
 	if err != nil {
 		panic(err)
 	}
-	cluster, err = NewCluster(ctx, "cu4k6mg398qd", kvs)
+	cluster, err = NewMatrix(ctx, "cu4k6mg398qd", kvs)
 	if err != nil {
 		panic(err)
 	}
@@ -41,14 +27,19 @@ func TestMain(m *testing.M) {
 }
 
 func TestCluster(t *testing.T) {
-	broker, err := cluster.NewBroker(ctx, "user-core-service",
-		WithBrokerServiceKeyParser(kparser),
-	)
+	broker, err := cluster.NewBroker(ctx, "user-core-service")
 	if err != nil {
 		t.Errorf("NewBroker failed, error is %s", err.Error())
 		return
 	}
 	defer broker.Close()
+
+	srv, err := cluster.NewService(ctx, "user-core-service")
+	if err != nil {
+		t.Errorf("NewService failed, error is %s", err.Error())
+		return
+	}
+	defer srv.Close()
 
 	go func() {
 		time.Sleep(4 * time.Second)
@@ -63,24 +54,24 @@ func TestCluster(t *testing.T) {
 		t.Logf("Balancer addrs: %+v\n", addrs)
 	}()
 
-	reporter0 := cluster.NewReporter(ctx, "user-core-service", WithReporterServiceKeyParser(kparser))
+	reporter0 := cluster.NewReporter(ctx, "user-core-service")
 	defer reporter0.Close()
 	reporter0.Keepalive("127.0.0.1:8080", 100, 2*time.Second)
 
-	reporter1 := cluster.NewReporter(ctx, "user-core-service", WithReporterServiceKeyParser(kparser))
+	reporter1 := cluster.NewReporter(ctx, "user-core-service")
 	defer reporter1.Close()
 	reporter1.Keepalive("127.0.0.1:8081", 100, 2*time.Second)
 
-	reporter2 := cluster.NewReporter(ctx, "user-core-service", WithReporterServiceKeyParser(kparser))
+	reporter2 := cluster.NewReporter(ctx, "user-core-service")
 	defer reporter2.Close()
 	reporter2.Keepalive("127.0.0.1:8082", 100, 2*time.Second)
 
-	reporter3 := cluster.NewReporter(ctx, "user-core-service", WithReporterServiceKeyParser(kparser))
+	reporter3 := cluster.NewReporter(ctx, "user-core-service")
 	defer reporter3.Close()
 	reporter3.Keepalive("127.0.0.1:8083", 1, 2*time.Second)
 
 	cluster.Setenv(ctx, "NAME", cluster.Name())
-	broker.Setenv(ctx, "options", `{"username":"root"}`)
+	srv.Setenv(ctx, "options", `{"username":"root"}`)
 
 	for i := 0; i < 5; i++ {
 		value := broker.Getenv(ctx, "options")
@@ -88,7 +79,7 @@ func TestCluster(t *testing.T) {
 		time.Sleep(1 * time.Second)
 	}
 
-	broker.Delenv(ctx, "options")
+	srv.Delenv(ctx, "options")
 	cluster.Delenv(ctx, "NAME")
 
 	time.Sleep(time.Second * 30)

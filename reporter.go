@@ -16,7 +16,6 @@ package cluster
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -29,20 +28,14 @@ func WithReporterTimeout(timeout time.Duration) ReporterOption {
 	return func(r *Reporter) { r.timeout = timeout }
 }
 
-// WithReporterServiceKeyParser
-func WithReporterServiceKeyParser(kparser ServiceKeyParser) ReporterOption {
-	return func(r *Reporter) { r.kparser = kparser }
-}
-
 type Reporter struct {
-	srvname  string
+	srvbase
 	endpoint Endpoint
 	ttl      time.Duration
 	cancelC  chan Endpoint
 	preemptC chan func()
 	reportT  *time.Ticker
 	reportC  <-chan time.Time
-	kparser  ServiceKeyParser
 	ctx      context.Context
 	cancel   context.CancelFunc
 	timeout  time.Duration
@@ -55,7 +48,9 @@ type Reporter struct {
 // NewReporter
 func (m *Matrix) NewReporter(ctx context.Context, srvname string, opts ...ReporterOption) (r *Reporter) {
 	r = &Reporter{
-		srvname:  srvname,
+		srvbase: srvbase{
+			name: srvname,
+		},
 		endpoint: Endpoint{},
 		ttl:      0,
 		reportT:  nil,
@@ -71,10 +66,6 @@ func (m *Matrix) NewReporter(ctx context.Context, srvname string, opts ...Report
 	// Option: timeout
 	if r.timeout <= 0 {
 		r.timeout = 100 * time.Millisecond
-	}
-	// Option: kparser
-	if r.kparser == nil {
-		r.kparser = &defaultServiceKeyParser{}
 	}
 
 	// Context
@@ -99,10 +90,10 @@ func (r *Reporter) background() {
 			return
 		// Report
 		case <-r.reportC:
-			r.register(context.Background(), r.endpoint, r.ttl)
+			r.register(r.ctx, r.endpoint, r.ttl)
 		// Cancel
 		case ep := <-r.cancelC:
-			r.unregister(context.Background(), ep)
+			r.unregister(r.ctx, ep)
 		// Preempt
 		case preempt := <-r.preemptC:
 			preempt()
@@ -117,7 +108,7 @@ func (r *Reporter) preempt(fun func()) {
 
 // Name
 func (r *Reporter) Name() string {
-	return r.srvname
+	return r.name
 }
 
 // Keepalive
@@ -194,11 +185,6 @@ func (r *Reporter) unregister(ctx context.Context, endpoint Endpoint) (err error
 	defer cancel()
 	// Delete endpoint
 	return r.matrix.Delete(ctx, r.buildKey("/endpoints"+endpoint.ID))
-}
-
-// buildKey
-func (r *Reporter) buildKey(key string) (newkey string) {
-	return "/" + strings.TrimPrefix(r.kparser.Resolve(r.srvname), "/") + "/" + strings.TrimPrefix(key, "/")
 }
 
 // Close
