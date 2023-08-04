@@ -36,8 +36,8 @@ type FieldWatcher interface {
 
 type Watcher interface{}
 
-// Key Server
-type KVS interface {
+// Key-Value Storage
+type KvStore interface {
 	Watch(ctx context.Context, key string, watcher Watcher) (err error)
 	Range(ctx context.Context, key string) (values map[string][]byte, err error)
 	Get(ctx context.Context, key string) (value []byte, err error)
@@ -59,11 +59,11 @@ type Matrix struct {
 	closed   uint32
 	wg       sync.WaitGroup
 	mu       sync.RWMutex
-	kvs      KVS
+	kvs      KvStore
 }
 
 // NewMatrix returns a new cluster.
-func NewMatrix(ctx context.Context, name string, kvs KVS, opts ...MatrixOption) (m *Matrix, err error) {
+func NewMatrix(ctx context.Context, name string, kvs KvStore, opts ...MatrixOption) (m *Matrix, err error) {
 	m = &Matrix{
 		name:     name,
 		envs:     make(map[string]string),

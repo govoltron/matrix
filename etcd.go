@@ -23,31 +23,31 @@ import (
 	etcd "go.etcd.io/etcd/client/v3"
 )
 
-type EtcdKVSOption func(kvs *EtcdKVS)
+type EtcdStoreOption func(kvs *EtcdStore)
 
 // WithEtcdAuthentication
-func WithEtcdAuthentication(username, password string) EtcdKVSOption {
-	return func(kvs *EtcdKVS) {
+func WithEtcdAuthentication(username, password string) EtcdStoreOption {
+	return func(kvs *EtcdStore) {
 		kvs.config.Username = username
 		kvs.config.Password = password
 	}
 }
 
 // WithEtcdDialTimeout
-func WithEtcdDialTimeout(timeout time.Duration) EtcdKVSOption {
-	return func(kvs *EtcdKVS) { kvs.config.DialTimeout = timeout }
+func WithEtcdDialTimeout(timeout time.Duration) EtcdStoreOption {
+	return func(kvs *EtcdStore) { kvs.config.DialTimeout = timeout }
 }
 
-type EtcdKVS struct {
+type EtcdStore struct {
 	config *etcd.Config
 	client *etcd.Client
 	leases map[string]map[int64]etcd.LeaseID
 	mu     sync.RWMutex
 }
 
-// NewEtcdKVS
-func NewEtcdKVS(ctx context.Context, endpoints []string, opts ...EtcdKVSOption) (kvs *EtcdKVS, err error) {
-	kvs = &EtcdKVS{
+// NewEtcdStore
+func NewEtcdStore(ctx context.Context, endpoints []string, opts ...EtcdStoreOption) (kvs *EtcdStore, err error) {
+	kvs = &EtcdStore{
 		config: &etcd.Config{
 			Context:   ctx,
 			Endpoints: endpoints,
@@ -72,7 +72,7 @@ func NewEtcdKVS(ctx context.Context, endpoints []string, opts ...EtcdKVSOption) 
 }
 
 // Range implements KVS.
-func (kvs *EtcdKVS) Range(ctx context.Context, key string) (values map[string][]byte, err error) {
+func (kvs *EtcdStore) Range(ctx context.Context, key string) (values map[string][]byte, err error) {
 	resp, err := kvs.client.Get(ctx, key, etcd.WithPrefix())
 	if err != nil {
 		return nil, err
@@ -89,7 +89,7 @@ func (kvs *EtcdKVS) Range(ctx context.Context, key string) (values map[string][]
 }
 
 // Watch implements KVS.
-func (kvs *EtcdKVS) Watch(ctx context.Context, key string, watcher Watcher) (err error) {
+func (kvs *EtcdStore) Watch(ctx context.Context, key string, watcher Watcher) (err error) {
 	switch w := watcher.(type) {
 	case KeyWatcher:
 		return kvs.WatchKey(ctx, key, w)
@@ -100,7 +100,7 @@ func (kvs *EtcdKVS) Watch(ctx context.Context, key string, watcher Watcher) (err
 }
 
 // WatchKey
-func (kvs *EtcdKVS) WatchKey(ctx context.Context, key string, watcher KeyWatcher) (err error) {
+func (kvs *EtcdStore) WatchKey(ctx context.Context, key string, watcher KeyWatcher) (err error) {
 	value, err := kvs.Get(ctx, key)
 	if err != nil {
 		return
@@ -135,7 +135,7 @@ func (kvs *EtcdKVS) WatchKey(ctx context.Context, key string, watcher KeyWatcher
 }
 
 // WatchField
-func (kvs *EtcdKVS) WatchField(ctx context.Context, key string, watcher FieldWatcher) (err error) {
+func (kvs *EtcdStore) WatchField(ctx context.Context, key string, watcher FieldWatcher) (err error) {
 	values, err := kvs.Range(ctx, key)
 	if err != nil {
 		return
@@ -176,7 +176,7 @@ func (kvs *EtcdKVS) WatchField(ctx context.Context, key string, watcher FieldWat
 }
 
 // Get implements KVS.
-func (kvs *EtcdKVS) Get(ctx context.Context, key string) (value []byte, err error) {
+func (kvs *EtcdStore) Get(ctx context.Context, key string) (value []byte, err error) {
 	resp, err := kvs.client.Get(ctx, key)
 	if err != nil {
 		return nil, err
@@ -188,7 +188,7 @@ func (kvs *EtcdKVS) Get(ctx context.Context, key string) (value []byte, err erro
 }
 
 // Set implements KVS.
-func (kvs *EtcdKVS) Set(ctx context.Context, key string, value []byte, ttl time.Duration) (err error) {
+func (kvs *EtcdStore) Set(ctx context.Context, key string, value []byte, ttl time.Duration) (err error) {
 	var (
 		sec  int64
 		opts []etcd.OpOption
@@ -220,7 +220,7 @@ func (kvs *EtcdKVS) Set(ctx context.Context, key string, value []byte, ttl time.
 }
 
 // Delete implements KVS.
-func (kvs *EtcdKVS) Delete(ctx context.Context, key string) (err error) {
+func (kvs *EtcdStore) Delete(ctx context.Context, key string) (err error) {
 	// Delete key
 	_, err = kvs.client.Delete(ctx, key)
 	// Delete leases
@@ -239,7 +239,7 @@ func (kvs *EtcdKVS) Delete(ctx context.Context, key string) (err error) {
 }
 
 // getLeaseID
-func (kvs *EtcdKVS) getLeaseID(key string, sec int64) (leaseID etcd.LeaseID, ok bool) {
+func (kvs *EtcdStore) getLeaseID(key string, sec int64) (leaseID etcd.LeaseID, ok bool) {
 	kvs.mu.RLock()
 	defer kvs.mu.RUnlock()
 	if leaseIDs, ok1 := kvs.leases[key]; !ok1 {
@@ -251,7 +251,7 @@ func (kvs *EtcdKVS) getLeaseID(key string, sec int64) (leaseID etcd.LeaseID, ok 
 }
 
 // setLeaseID
-func (kvs *EtcdKVS) setLeaseID(key string, sec int64, leaseID etcd.LeaseID) {
+func (kvs *EtcdStore) setLeaseID(key string, sec int64, leaseID etcd.LeaseID) {
 	kvs.mu.Lock()
 	defer kvs.mu.Unlock()
 	if _, ok := kvs.leases[key]; !ok {
@@ -261,6 +261,6 @@ func (kvs *EtcdKVS) setLeaseID(key string, sec int64, leaseID etcd.LeaseID) {
 }
 
 // Close implements KVS.
-func (kvs *EtcdKVS) Close(ctx context.Context) (err error) {
+func (kvs *EtcdStore) Close(ctx context.Context) (err error) {
 	return kvs.client.Close()
 }

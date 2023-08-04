@@ -2,6 +2,7 @@ package cluster
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 )
@@ -13,17 +14,39 @@ var (
 
 // TestMain
 func TestMain(m *testing.M) {
-	kvs, err := NewEtcdKVS(ctx, []string{"127.0.0.1:2379"})
+	kvs, err := NewEtcdStore(ctx, []string{"127.0.0.1:2379"})
 	if err != nil {
 		panic(err)
 	}
-	cluster, err = NewMatrix(ctx, "cu4k6mg398qd", kvs)
-	if err != nil {
+	if cluster, err = NewMatrix(ctx, "cu4k6mg398qd", kvs); err != nil {
 		panic(err)
 	}
 	defer cluster.Close(ctx)
 	// Run
 	m.Run()
+}
+
+type brokerWatcher struct {
+}
+
+// OnSetenv implements BrokerWatcher.
+func (*brokerWatcher) OnSetenv(key string, value string) {
+	fmt.Printf("OnSetenv: %s %s\n", key, value)
+}
+
+// OnDelenv implements BrokerWatcher.
+func (*brokerWatcher) OnDelenv(key string) {
+
+}
+
+// OnUpdateEndpoint implements BrokerWatcher.
+func (*brokerWatcher) OnUpdateEndpoint(endpoint Endpoint) {
+	fmt.Printf("OnUpdateEndpoint: %+v\n", endpoint)
+}
+
+// OnDeleteEndpoint implements BrokerWatcher.
+func (*brokerWatcher) OnDeleteEndpoint(id string) {
+
 }
 
 func TestCluster(t *testing.T) {
@@ -32,6 +55,9 @@ func TestCluster(t *testing.T) {
 		t.Errorf("NewBroker failed, error is %s", err.Error())
 		return
 	}
+	broker.Watch(&brokerWatcher{})
+	broker.Watch(nil)
+
 	defer broker.Close()
 
 	srv, err := cluster.NewService(ctx, "user-core-service")

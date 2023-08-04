@@ -20,12 +20,12 @@ import (
 	"sync/atomic"
 )
 
-// type BrokerWatcher interface {
-// 	OnSetenv(key, value string)
-// 	OnDelenv(key string)
-// 	OnUpdateEndpoint(endpoint Endpoint)
-// 	OnDeleteEndpoint(id string)
-// }
+type BrokerWatcher interface {
+	OnSetenv(key, value string)
+	OnDelenv(key string)
+	OnUpdateEndpoint(endpoint Endpoint)
+	OnDeleteEndpoint(id string)
+}
 
 type BrokerOption func(b *Broker)
 
@@ -39,6 +39,7 @@ type Broker struct {
 	deleteMC  chan string
 	ewatcher  FieldWatcher
 	mwatcher  FieldWatcher
+	bwatcher  BrokerWatcher
 	ctx       context.Context
 	cancel    context.CancelFunc
 	closed    uint32
@@ -97,30 +98,50 @@ func (b *Broker) background() {
 	}()
 
 	for {
+		var (
+			bwatcher BrokerWatcher
+		)
 		select {
 		// Done
 		case <-b.ctx.Done():
 			return
 		// Update environment variable
 		case fv := <-b.updateEC:
+			value := string(fv.Value)
 			b.mu.Lock()
-			b.envs[fv.Field] = string(fv.Value)
+			bwatcher = b.bwatcher
+			b.envs[fv.Field] = value
 			b.mu.Unlock()
+			if bwatcher != nil {
+				bwatcher.OnSetenv(fv.Field, value)
+			}
 		// Delete environment variable
 		case field := <-b.deleteEC:
 			b.mu.Lock()
+			bwatcher = b.bwatcher
 			delete(b.envs, field)
 			b.mu.Unlock()
+			if bwatcher != nil {
+				bwatcher.OnDelenv(field)
+			}
 		// Update endpoint
 		case endpoint := <-b.updateMC:
 			b.mu.Lock()
+			bwatcher = b.bwatcher
 			b.endpoints[endpoint.ID] = endpoint
 			b.mu.Unlock()
+			if bwatcher != nil {
+				bwatcher.OnUpdateEndpoint(endpoint)
+			}
 		// Delete endpoint
 		case id := <-b.deleteMC:
 			b.mu.Lock()
+			bwatcher = b.bwatcher
 			delete(b.endpoints, id)
 			b.mu.Unlock()
+			if bwatcher != nil {
+				bwatcher.OnDeleteEndpoint(id)
+			}
 		}
 	}
 }
@@ -145,6 +166,14 @@ func (b *Broker) Endpoints() (endpoints []Endpoint) {
 		endpoints = append(endpoints, endpoint)
 	}
 	return
+}
+
+// Watch
+func (b *Broker) Watch(watcher BrokerWatcher) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	// Set watcher
+	b.bwatcher = watcher
 }
 
 // Close
