@@ -22,13 +22,13 @@ import (
 	"time"
 )
 
-type KVWatcher interface {
+type KeyWatcher interface {
 	OnInit(key string, value []byte)
 	OnUpdate(key string, value []byte)
 	OnDelete(key string)
 }
 
-type FVWatcher interface {
+type FieldWatcher interface {
 	OnInit(values map[string][]byte)
 	OnUpdate(field string, value []byte)
 	OnDelete(field string)
@@ -53,7 +53,7 @@ type Matrix struct {
 	envs     map[string]string
 	updateEC chan fv
 	deleteEC chan string
-	ewatcher *fvWatcher
+	ewatcher FieldWatcher
 	ctx      context.Context
 	cancel   context.CancelFunc
 	closed   uint32
@@ -67,8 +67,8 @@ func NewMatrix(ctx context.Context, name string, kvs KVS, opts ...MatrixOption) 
 	m = &Matrix{
 		name:     name,
 		envs:     make(map[string]string),
-		updateEC: make(chan fv, 1),
-		deleteEC: make(chan string, 1),
+		updateEC: make(chan fv, 10),
+		deleteEC: make(chan string, 10),
 		kvs:      kvs,
 	}
 	// Set options
@@ -82,10 +82,14 @@ func NewMatrix(ctx context.Context, name string, kvs KVS, opts ...MatrixOption) 
 	m.wg.Add(1)
 	go m.background()
 	// Watcher
-	m.ewatcher = &fvWatcher{update: m.updateEC, delete: m.deleteEC}
+	m.ewatcher = &fieldWatcher{update: m.updateEC, delete: m.deleteEC}
 	// Watch
+	defer func() {
+		if err != nil {
+			m.cancel()
+		}
+	}()
 	if err = m.kvs.Watch(m.ctx, m.buildKey("/env"), m.ewatcher); err != nil {
-		m.cancel()
 		return nil, err
 	}
 

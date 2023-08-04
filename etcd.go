@@ -91,16 +91,16 @@ func (kvs *EtcdKVS) Range(ctx context.Context, key string) (values map[string][]
 // Watch implements KVS.
 func (kvs *EtcdKVS) Watch(ctx context.Context, key string, watcher Watcher) (err error) {
 	switch w := watcher.(type) {
-	case KVWatcher:
+	case KeyWatcher:
 		return kvs.WatchKey(ctx, key, w)
-	case FVWatcher:
+	case FieldWatcher:
 		return kvs.WatchField(ctx, key, w)
 	}
 	return errors.New("watcher not supported")
 }
 
 // WatchKey
-func (kvs *EtcdKVS) WatchKey(ctx context.Context, key string, watcher KVWatcher) (err error) {
+func (kvs *EtcdKVS) WatchKey(ctx context.Context, key string, watcher KeyWatcher) (err error) {
 	value, err := kvs.Get(ctx, key)
 	if err != nil {
 		return
@@ -135,7 +135,7 @@ func (kvs *EtcdKVS) WatchKey(ctx context.Context, key string, watcher KVWatcher)
 }
 
 // WatchField
-func (kvs *EtcdKVS) WatchField(ctx context.Context, key string, watcher FVWatcher) (err error) {
+func (kvs *EtcdKVS) WatchField(ctx context.Context, key string, watcher FieldWatcher) (err error) {
 	values, err := kvs.Range(ctx, key)
 	if err != nil {
 		return

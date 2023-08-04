@@ -56,7 +56,7 @@ func TestCluster(t *testing.T) {
 
 	reporter0 := cluster.NewReporter(ctx, "user-core-service")
 	defer reporter0.Close()
-	reporter0.Keepalive("127.0.0.1:8080", 100, 2*time.Second)
+	reporter0.Keepalive("114.116.209.130:8099", 100, 2*time.Second)
 
 	reporter1 := cluster.NewReporter(ctx, "user-core-service")
 	defer reporter1.Close()
@@ -71,7 +71,7 @@ func TestCluster(t *testing.T) {
 	reporter3.Keepalive("127.0.0.1:8083", 1, 2*time.Second)
 
 	cluster.Setenv(ctx, "NAME", cluster.Name())
-	srv.Setenv(ctx, "options", `{"username":"root","retry_count":99}`)
+	srv.Setenv(ctx, "options", `{"host":"open.17paipai.cn","scheme":"http"}`)
 
 	for i := 0; i < 5; i++ {
 		value := broker.Getenv(ctx, "options")

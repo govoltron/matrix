@@ -56,8 +56,8 @@ type Service struct {
 	deleteEC  chan string
 	updateMC  chan Endpoint
 	deleteMC  chan string
-	ewatcher  *fvWatcher
-	mwatcher  *memberWatcher
+	ewatcher  FieldWatcher
+	mwatcher  FieldWatcher
 	ctx       context.Context
 	cancel    context.CancelFunc
 	closed    uint32
@@ -74,10 +74,10 @@ func (m *Matrix) NewService(ctx context.Context, srvname string, opts ...Service
 		},
 		envs:      make(map[string]string),
 		endpoints: make(map[string]Endpoint),
-		updateMC:  make(chan Endpoint, 1),
-		deleteMC:  make(chan string, 1),
-		updateEC:  make(chan fv, 1),
-		deleteEC:  make(chan string, 1),
+		updateMC:  make(chan Endpoint, 10),
+		deleteMC:  make(chan string, 10),
+		updateEC:  make(chan fv, 10),
+		deleteEC:  make(chan string, 10),
 		matrix:    m,
 	}
 	// Set options
@@ -91,15 +91,18 @@ func (m *Matrix) NewService(ctx context.Context, srvname string, opts ...Service
 	srv.wg.Add(1)
 	go srv.background()
 	// Watcher
-	srv.ewatcher = &fvWatcher{update: srv.updateEC, delete: srv.deleteEC}
-	srv.mwatcher = &memberWatcher{update: srv.updateMC, delete: srv.deleteMC}
+	srv.ewatcher = &fieldWatcher{update: srv.updateEC, delete: srv.deleteEC}
+	srv.mwatcher = &endpointWatcher{update: srv.updateMC, delete: srv.deleteMC}
 	// Watch
+	defer func() {
+		if err != nil {
+			srv.cancel()
+		}
+	}()
 	if err = srv.matrix.Watch(ctx, srv.buildKey("/env"), srv.ewatcher); err != nil {
-		srv.cancel()
 		return nil, err
 	}
 	if err = srv.matrix.Watch(srv.ctx, srv.buildKey("/endpoints"), srv.mwatcher); err != nil {
-		srv.cancel()
 		return nil, err
 	}
 
@@ -133,9 +136,9 @@ func (srv *Service) background() {
 			srv.endpoints[endpoint.ID] = endpoint
 			srv.mu.Unlock()
 		// Delete endpoint
-		case member := <-srv.deleteMC:
+		case id := <-srv.deleteMC:
 			srv.mu.Lock()
-			delete(srv.endpoints, member)
+			delete(srv.endpoints, id)
 			srv.mu.Unlock()
 		}
 	}

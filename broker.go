@@ -20,6 +20,13 @@ import (
 	"sync/atomic"
 )
 
+// type BrokerWatcher interface {
+// 	OnSetenv(key, value string)
+// 	OnDelenv(key string)
+// 	OnUpdateEndpoint(endpoint Endpoint)
+// 	OnDeleteEndpoint(id string)
+// }
+
 type BrokerOption func(b *Broker)
 
 type Broker struct {
@@ -30,8 +37,8 @@ type Broker struct {
 	deleteEC  chan string
 	updateMC  chan Endpoint
 	deleteMC  chan string
-	ewatcher  *fvWatcher
-	mwatcher  *memberWatcher
+	ewatcher  FieldWatcher
+	mwatcher  FieldWatcher
 	ctx       context.Context
 	cancel    context.CancelFunc
 	closed    uint32
@@ -48,10 +55,10 @@ func (m *Matrix) NewBroker(ctx context.Context, srvname string, opts ...BrokerOp
 		},
 		envs:      make(map[string]string),
 		endpoints: make(map[string]Endpoint),
-		updateMC:  make(chan Endpoint, 1),
-		deleteMC:  make(chan string, 1),
-		updateEC:  make(chan fv, 1),
-		deleteEC:  make(chan string, 1),
+		updateMC:  make(chan Endpoint, 10),
+		deleteMC:  make(chan string, 10),
+		updateEC:  make(chan fv, 10),
+		deleteEC:  make(chan string, 10),
 		matrix:    m,
 	}
 	// Set options
@@ -65,15 +72,18 @@ func (m *Matrix) NewBroker(ctx context.Context, srvname string, opts ...BrokerOp
 	b.wg.Add(1)
 	go b.background()
 	// Watcher
-	b.ewatcher = &fvWatcher{update: b.updateEC, delete: b.deleteEC}
-	b.mwatcher = &memberWatcher{update: b.updateMC, delete: b.deleteMC}
+	b.ewatcher = &fieldWatcher{update: b.updateEC, delete: b.deleteEC}
+	b.mwatcher = &endpointWatcher{update: b.updateMC, delete: b.deleteMC}
 	// Watch
+	defer func() {
+		if err != nil {
+			b.cancel()
+		}
+	}()
 	if err = b.matrix.Watch(ctx, b.buildKey("/env"), b.ewatcher); err != nil {
-		b.cancel()
 		return nil, err
 	}
 	if err = b.matrix.Watch(b.ctx, b.buildKey("/endpoints"), b.mwatcher); err != nil {
-		b.cancel()
 		return nil, err
 	}
 
@@ -107,9 +117,9 @@ func (b *Broker) background() {
 			b.endpoints[endpoint.ID] = endpoint
 			b.mu.Unlock()
 		// Delete endpoint
-		case member := <-b.deleteMC:
+		case id := <-b.deleteMC:
 			b.mu.Lock()
-			delete(b.endpoints, member)
+			delete(b.endpoints, id)
 			b.mu.Unlock()
 		}
 	}
