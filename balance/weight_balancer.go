@@ -17,33 +17,35 @@ package matrix
 import (
 	"sync"
 	"time"
+
+	"github.com/govoltron/matrix"
 )
 
-type BalancerOption func(b *Balancer)
+type WeightBalancerOption func(b *WeightBalancer)
 
-// WithBalancerEndpointsCacheInterval
-func WithBalancerEndpointsCacheInterval(interval time.Duration) BalancerOption {
-	return func(b *Balancer) { b.interval = interval }
+// WithWeightBalancerEndpointsCacheInterval
+func WithWeightBalancerEndpointsCacheInterval(interval time.Duration) WeightBalancerOption {
+	return func(b *WeightBalancer) { b.interval = interval }
 }
 
 type node struct {
 	current   int
 	effective int
-	endpoint  Endpoint
+	endpoint  matrix.Endpoint
 }
 
-type Balancer struct {
+type WeightBalancer struct {
 	rss      []*node
 	rsm      map[string]int
-	broker   *Broker
+	broker   *matrix.Broker
 	last     time.Time
 	interval time.Duration
 	mu       sync.RWMutex
 }
 
-// NewBalancer
-func NewBalancer(broker *Broker, opts ...BalancerOption) (b *Balancer) {
-	b = &Balancer{
+// NewWeightBalancer
+func NewWeightBalancer(broker *matrix.Broker, opts ...WeightBalancerOption) (b *WeightBalancer) {
+	b = &WeightBalancer{
 		broker: broker,
 		rss:    make([]*node, 0),
 		rsm:    make(map[string]int),
@@ -61,7 +63,7 @@ func NewBalancer(broker *Broker, opts ...BalancerOption) (b *Balancer) {
 }
 
 // Next
-func (b *Balancer) Next() (addr string) {
+func (b *WeightBalancer) Next() (addr string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
@@ -73,7 +75,7 @@ func (b *Balancer) Next() (addr string) {
 }
 
 // Unhealth
-func (b *Balancer) Unhealth(addr string) {
+func (b *WeightBalancer) Unhealth(addr string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if node, ok := b.node(addr); ok && node.effective > 0 {
@@ -82,7 +84,7 @@ func (b *Balancer) Unhealth(addr string) {
 }
 
 // IsDeprecated
-func (b *Balancer) IsDeprecated(addr string) (yes bool) {
+func (b *WeightBalancer) IsDeprecated(addr string) (yes bool) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	_, ok := b.node(addr)
@@ -90,7 +92,7 @@ func (b *Balancer) IsDeprecated(addr string) (yes bool) {
 }
 
 // update
-func (b *Balancer) update() {
+func (b *WeightBalancer) update() {
 	now := time.Now()
 	if len(b.rss) > 0 && now.Sub(b.last) < b.interval {
 		return
@@ -119,7 +121,7 @@ func (b *Balancer) update() {
 }
 
 // next
-func (b *Balancer) next() (addr string) {
+func (b *WeightBalancer) next() (addr string) {
 	var (
 		total int
 		best  *node
@@ -146,7 +148,7 @@ func (b *Balancer) next() (addr string) {
 }
 
 // node
-func (b *Balancer) node(addr string) (node *node, ok bool) {
+func (b *WeightBalancer) node(addr string) (node *node, ok bool) {
 	if i, ok1 := b.rsm[addr]; !ok1 {
 		return nil, false
 	} else if i < len(b.rss) {

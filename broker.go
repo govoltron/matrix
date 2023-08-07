@@ -45,11 +45,11 @@ type Broker struct {
 	closed    uint32
 	wg        sync.WaitGroup
 	mu        sync.RWMutex
-	matrix    *Matrix
+	cluster   *Cluster
 }
 
 // NewBroker
-func (m *Matrix) NewBroker(ctx context.Context, srvname string, opts ...BrokerOption) (b *Broker, err error) {
+func (c *Cluster) NewBroker(ctx context.Context, srvname string, opts ...BrokerOption) (b *Broker, err error) {
 	b = &Broker{
 		srvbase: srvbase{
 			name: srvname,
@@ -60,7 +60,7 @@ func (m *Matrix) NewBroker(ctx context.Context, srvname string, opts ...BrokerOp
 		deleteMC:  make(chan string, 10),
 		updateEC:  make(chan fv, 10),
 		deleteEC:  make(chan string, 10),
-		matrix:    m,
+		cluster:   c,
 	}
 	// Set options
 	for _, setOpt := range opts {
@@ -81,10 +81,10 @@ func (m *Matrix) NewBroker(ctx context.Context, srvname string, opts ...BrokerOp
 			b.cancel()
 		}
 	}()
-	if err = b.matrix.Watch(ctx, b.buildKey("/env"), b.ewatcher); err != nil {
+	if err = b.cluster.Watch(ctx, b.buildKey("/env"), b.ewatcher); err != nil {
 		return nil, err
 	}
-	if err = b.matrix.Watch(b.ctx, b.buildKey("/endpoints"), b.mwatcher); err != nil {
+	if err = b.cluster.Watch(b.ctx, b.buildKey("/endpoints"), b.mwatcher); err != nil {
 		return nil, err
 	}
 

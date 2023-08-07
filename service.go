@@ -63,11 +63,11 @@ type Service struct {
 	closed    uint32
 	wg        sync.WaitGroup
 	mu        sync.RWMutex
-	matrix    *Matrix
+	cluster   *Cluster
 }
 
 // NewService
-func (m *Matrix) NewService(ctx context.Context, srvname string, opts ...ServiceOption) (srv *Service, err error) {
+func (c *Cluster) NewService(ctx context.Context, srvname string, opts ...ServiceOption) (srv *Service, err error) {
 	srv = &Service{
 		srvbase: srvbase{
 			name: srvname,
@@ -78,7 +78,7 @@ func (m *Matrix) NewService(ctx context.Context, srvname string, opts ...Service
 		deleteMC:  make(chan string, 10),
 		updateEC:  make(chan fv, 10),
 		deleteEC:  make(chan string, 10),
-		matrix:    m,
+		cluster:   c,
 	}
 	// Set options
 	for _, setOpt := range opts {
@@ -99,10 +99,10 @@ func (m *Matrix) NewService(ctx context.Context, srvname string, opts ...Service
 			srv.cancel()
 		}
 	}()
-	if err = srv.matrix.Watch(ctx, srv.buildKey("/env"), srv.ewatcher); err != nil {
+	if err = srv.cluster.Watch(ctx, srv.buildKey("/env"), srv.ewatcher); err != nil {
 		return nil, err
 	}
-	if err = srv.matrix.Watch(srv.ctx, srv.buildKey("/endpoints"), srv.mwatcher); err != nil {
+	if err = srv.cluster.Watch(srv.ctx, srv.buildKey("/endpoints"), srv.mwatcher); err != nil {
 		return nil, err
 	}
 
@@ -163,7 +163,7 @@ func (srv *Service) Setenv(ctx context.Context, key, value string) (err error) {
 		srv.envs[key] = value
 		srv.mu.Unlock()
 	}()
-	return srv.matrix.Set(ctx, srv.buildKey("/env/"+key), []byte(value), 0)
+	return srv.cluster.Set(ctx, srv.buildKey("/env/"+key), []byte(value), 0)
 }
 
 // Delenv deletes the environment variable.
@@ -173,7 +173,7 @@ func (srv *Service) Delenv(ctx context.Context, key string) (err error) {
 		delete(srv.envs, key)
 		srv.mu.Unlock()
 	}()
-	return srv.matrix.Delete(ctx, srv.buildKey("/env/"+key))
+	return srv.cluster.Delete(ctx, srv.buildKey("/env/"+key))
 }
 
 // Endpoints

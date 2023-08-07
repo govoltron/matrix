@@ -42,11 +42,11 @@ type Reporter struct {
 	closed   uint32
 	wg       sync.WaitGroup
 	mu       sync.RWMutex
-	matrix   *Matrix
+	cluster  *Cluster
 }
 
 // NewReporter
-func (m *Matrix) NewReporter(ctx context.Context, srvname string, opts ...ReporterOption) (r *Reporter) {
+func (c *Cluster) NewReporter(ctx context.Context, srvname string, opts ...ReporterOption) (r *Reporter) {
 	r = &Reporter{
 		srvbase: srvbase{
 			name: srvname,
@@ -57,7 +57,7 @@ func (m *Matrix) NewReporter(ctx context.Context, srvname string, opts ...Report
 		reportC:  nil,
 		cancelC:  make(chan Endpoint, 1),
 		preemptC: make(chan func(), 1),
-		matrix:   m,
+		cluster:  c,
 	}
 	// Set options
 	for _, setOpt := range opts {
@@ -145,6 +145,8 @@ func (r *Reporter) Keepalive(addr string, weight int, ttl time.Duration) {
 			Addr:   addr,
 			Weight: weight,
 		}
+		// First report
+		r.register(r.ctx, r.endpoint, r.ttl)
 	})
 }
 
@@ -176,7 +178,7 @@ func (r *Reporter) register(ctx context.Context, endpoint Endpoint, ttl time.Dur
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	// Update endpoint
-	return r.matrix.Set(ctx, r.buildKey("/endpoints/"+endpoint.ID), value, ttl)
+	return r.cluster.Set(ctx, r.buildKey("/endpoints/"+endpoint.ID), value, ttl)
 }
 
 // unregister
@@ -184,7 +186,7 @@ func (r *Reporter) unregister(ctx context.Context, endpoint Endpoint) (err error
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 	// Delete endpoint
-	return r.matrix.Delete(ctx, r.buildKey("/endpoints"+endpoint.ID))
+	return r.cluster.Delete(ctx, r.buildKey("/endpoints"+endpoint.ID))
 }
 
 // Close

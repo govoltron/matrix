@@ -46,9 +46,9 @@ type KvStore interface {
 	Close(ctx context.Context) (err error)
 }
 
-type MatrixOption func(m *Matrix)
+type ClusterOption func(m *Cluster)
 
-type Matrix struct {
+type Cluster struct {
 	name     string
 	envs     map[string]string
 	updateEC chan fv
@@ -62,9 +62,9 @@ type Matrix struct {
 	kvs      KvStore
 }
 
-// NewMatrix returns a new cluster.
-func NewMatrix(ctx context.Context, name string, kvs KvStore, opts ...MatrixOption) (m *Matrix, err error) {
-	m = &Matrix{
+// NewCluster returns a new cluster.
+func NewCluster(ctx context.Context, name string, kvs KvStore, opts ...ClusterOption) (c *Cluster, err error) {
+	c = &Cluster{
 		name:     name,
 		envs:     make(map[string]string),
 		updateEC: make(chan fv, 10),
@@ -73,23 +73,23 @@ func NewMatrix(ctx context.Context, name string, kvs KvStore, opts ...MatrixOpti
 	}
 	// Set options
 	for _, setOpt := range opts {
-		setOpt(m)
+		setOpt(c)
 	}
 
 	// Context
-	m.ctx, m.cancel = context.WithCancel(ctx)
+	c.ctx, c.cancel = context.WithCancel(ctx)
 	// Background goroutine
-	m.wg.Add(1)
-	go m.background()
+	c.wg.Add(1)
+	go c.background()
 	// Watcher
-	m.ewatcher = &fieldWatcher{update: m.updateEC, delete: m.deleteEC}
+	c.ewatcher = &fieldWatcher{update: c.updateEC, delete: c.deleteEC}
 	// Watch
 	defer func() {
 		if err != nil {
-			m.cancel()
+			c.cancel()
 		}
 	}()
-	if err = m.kvs.Watch(m.ctx, m.buildKey("/env"), m.ewatcher); err != nil {
+	if err = c.kvs.Watch(c.ctx, c.buildKey("/env"), c.ewatcher); err != nil {
 		return nil, err
 	}
 
@@ -97,98 +97,98 @@ func NewMatrix(ctx context.Context, name string, kvs KvStore, opts ...MatrixOpti
 }
 
 // background
-func (m *Matrix) background() {
+func (c *Cluster) background() {
 	defer func() {
-		m.wg.Done()
+		c.wg.Done()
 	}()
 
 	for {
 		select {
 		// Done
-		case <-m.ctx.Done():
+		case <-c.ctx.Done():
 			return
 		// Update environment variable
-		case fv := <-m.updateEC:
-			m.mu.Lock()
-			m.envs[fv.Field] = string(fv.Value)
-			m.mu.Unlock()
+		case fv := <-c.updateEC:
+			c.mu.Lock()
+			c.envs[fv.Field] = string(fv.Value)
+			c.mu.Unlock()
 		// Delete environment variable
-		case field := <-m.deleteEC:
-			m.mu.Lock()
-			delete(m.envs, field)
-			m.mu.Unlock()
+		case field := <-c.deleteEC:
+			c.mu.Lock()
+			delete(c.envs, field)
+			c.mu.Unlock()
 		}
 	}
 }
 
 // Name
-func (m *Matrix) Name() string {
-	return m.name
+func (c *Cluster) Name() string {
+	return c.name
 }
 
 // Getenv returns the environment variable.
-func (m *Matrix) Getenv(_ context.Context, key string) (value string) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	return m.envs[key]
+func (c *Cluster) Getenv(_ context.Context, key string) (value string) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.envs[key]
 }
 
 // Getenv sets the environment variable.
-func (m *Matrix) Setenv(ctx context.Context, key, value string) (err error) {
-	m.mu.Lock()
+func (c *Cluster) Setenv(ctx context.Context, key, value string) (err error) {
+	c.mu.Lock()
 	defer func() {
-		m.envs[key] = value
-		m.mu.Unlock()
+		c.envs[key] = value
+		c.mu.Unlock()
 	}()
-	return m.kvs.Set(ctx, m.buildKey("/env/"+key), []byte(value), 0)
+	return c.kvs.Set(ctx, c.buildKey("/env/"+key), []byte(value), 0)
 }
 
 // Delenv deletes the environment variable.
-func (m *Matrix) Delenv(ctx context.Context, key string) (err error) {
-	m.mu.Lock()
+func (c *Cluster) Delenv(ctx context.Context, key string) (err error) {
+	c.mu.Lock()
 	defer func() {
-		delete(m.envs, key)
-		m.mu.Unlock()
+		delete(c.envs, key)
+		c.mu.Unlock()
 	}()
-	return m.kvs.Delete(ctx, m.buildKey("/env/"+key))
+	return c.kvs.Delete(ctx, c.buildKey("/env/"+key))
 }
 
 // Watch
-func (m *Matrix) Watch(ctx context.Context, key string, watcher Watcher) (err error) {
-	return m.kvs.Watch(ctx, m.buildKey(key), watcher)
+func (c *Cluster) Watch(ctx context.Context, key string, watcher Watcher) (err error) {
+	return c.kvs.Watch(ctx, c.buildKey(key), watcher)
 }
 
 // Range
-func (m *Matrix) Range(ctx context.Context, key string) (values map[string][]byte, err error) {
-	return m.kvs.Range(ctx, m.buildKey(key))
+func (c *Cluster) Range(ctx context.Context, key string) (values map[string][]byte, err error) {
+	return c.kvs.Range(ctx, c.buildKey(key))
 }
 
 // Get
-func (m *Matrix) Get(ctx context.Context, key string) (value []byte, err error) {
-	return m.kvs.Get(ctx, m.buildKey(key))
+func (c *Cluster) Get(ctx context.Context, key string) (value []byte, err error) {
+	return c.kvs.Get(ctx, c.buildKey(key))
 }
 
 // Set
-func (m *Matrix) Set(ctx context.Context, key string, value []byte, ttl time.Duration) (err error) {
-	return m.kvs.Set(ctx, m.buildKey(key), value, ttl)
+func (c *Cluster) Set(ctx context.Context, key string, value []byte, ttl time.Duration) (err error) {
+	return c.kvs.Set(ctx, c.buildKey(key), value, ttl)
 }
 
 // Delete
-func (m *Matrix) Delete(ctx context.Context, key string) (err error) {
-	return m.kvs.Delete(ctx, m.buildKey(key))
+func (c *Cluster) Delete(ctx context.Context, key string) (err error) {
+	return c.kvs.Delete(ctx, c.buildKey(key))
 }
 
 // buildKey
-func (m *Matrix) buildKey(key string) (newkey string) {
-	return "/" + m.name + "/" + strings.Trim(key, "/")
+func (c *Cluster) buildKey(key string) (newkey string) {
+	return "/" + c.name + "/" + strings.Trim(key, "/")
 }
 
 // Close
-func (m *Matrix) Close(ctx context.Context) (err error) {
-	if !atomic.CompareAndSwapUint32(&m.closed, 0, 1) {
+func (c *Cluster) Close(ctx context.Context) (err error) {
+	if !atomic.CompareAndSwapUint32(&c.closed, 0, 1) {
 		return
 	}
-	m.cancel()
-	m.wg.Wait()
-	return m.kvs.Close(ctx)
+	c.cancel()
+	c.wg.Wait()
+	return c.kvs.Close(ctx)
 }
