@@ -1,4 +1,4 @@
-module github.com/govoltron/cluster
+module github.com/govoltron/matrix
 
 go 1.16
 
