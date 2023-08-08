@@ -12,70 +12,47 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package matrix
+package balance
 
 import (
 	"sync"
-	"time"
-
-	"github.com/govoltron/matrix"
 )
 
-type WeightBalancerOption func(b *WeightBalancer)
-
-// WithWeightBalancerEndpointsCacheInterval
-func WithWeightBalancerEndpointsCacheInterval(interval time.Duration) WeightBalancerOption {
-	return func(b *WeightBalancer) { b.interval = interval }
+type Endpoint struct {
+	Addr   string `json:"addr"`
+	Weight int    `json:"weight"`
 }
 
 type node struct {
 	current   int
 	effective int
-	endpoint  matrix.Endpoint
+	endpoint  Endpoint
 }
 
-type WeightBalancer struct {
-	rss      []*node
-	rsm      map[string]int
-	broker   *matrix.Broker
-	last     time.Time
-	interval time.Duration
-	mu       sync.RWMutex
+type WeightRoundRobinBalancer struct {
+	rss []*node
+	rsm map[string]int
+	mu  sync.RWMutex
 }
 
-// NewWeightBalancer
-func NewWeightBalancer(broker *matrix.Broker, opts ...WeightBalancerOption) (b *WeightBalancer) {
-	b = &WeightBalancer{
-		broker: broker,
-		rss:    make([]*node, 0),
-		rsm:    make(map[string]int),
+// NewWeightRoundRobinBalancer
+func NewWeightRoundRobinBalancer() (b *WeightRoundRobinBalancer) {
+	return &WeightRoundRobinBalancer{
+		rss: make([]*node, 0),
+		rsm: make(map[string]int),
 	}
-	// Set options
-	for _, setOpt := range opts {
-		setOpt(b)
-	}
-	// Option: interval
-	if b.interval <= 0 {
-		b.interval = 5 * time.Second
-	}
-
-	return
 }
 
 // Next
-func (b *WeightBalancer) Next() (addr string) {
+func (b *WeightRoundRobinBalancer) Next() (addr string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-
-	// Update rss
-	b.update()
-
 	// Next
 	return b.next()
 }
 
-// Unhealth
-func (b *WeightBalancer) Unhealth(addr string) {
+// UnStable
+func (b *WeightRoundRobinBalancer) UnStable(addr string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if node, ok := b.node(addr); ok && node.effective > 0 {
@@ -83,8 +60,48 @@ func (b *WeightBalancer) Unhealth(addr string) {
 	}
 }
 
+// Replace implements Balancer.
+func (b *WeightRoundRobinBalancer) Set(endpoints []Endpoint) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	// Update
+	b.update(endpoints)
+}
+
+// Add implements Balancer.
+func (b *WeightRoundRobinBalancer) Add(endpoints ...Endpoint) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	// Add
+	for _, node := range b.rss {
+		endpoints = append(endpoints, node.endpoint)
+	}
+	// Update
+	b.update(endpoints)
+}
+
+// Remove implements Balancer.
+func (b *WeightRoundRobinBalancer) Remove(addr string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	// Remove
+	if i, ok := b.rsm[addr]; !ok {
+		return
+	} else if i < len(b.rss) {
+		if i+1 == len(b.rss) {
+			b.rss = b.rss[0:i]
+		} else {
+			b.rss = append(b.rss[0:i], b.rss[i+1:]...)
+			for j := i; j < len(b.rss); i++ {
+				b.rsm[b.rss[j].endpoint.Addr] = j
+			}
+		}
+		delete(b.rsm, addr)
+	}
+}
+
 // IsDeprecated
-func (b *WeightBalancer) IsDeprecated(addr string) (yes bool) {
+func (b *WeightRoundRobinBalancer) IsDeprecated(addr string) (yes bool) {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	_, ok := b.node(addr)
@@ -92,17 +109,13 @@ func (b *WeightBalancer) IsDeprecated(addr string) (yes bool) {
 }
 
 // update
-func (b *WeightBalancer) update() {
-	now := time.Now()
-	if len(b.rss) > 0 && now.Sub(b.last) < b.interval {
-		return
-	}
+func (b *WeightRoundRobinBalancer) update(endpoints []Endpoint) {
 	// Get endpoints and update
 	var (
 		rss = make([]*node, 0)
 		rsm = make(map[string]int)
 	)
-	for _, endpoint := range b.broker.Endpoints() {
+	for _, endpoint := range endpoints {
 		node := &node{
 			endpoint:  endpoint,
 			effective: endpoint.Weight,
@@ -117,11 +130,11 @@ func (b *WeightBalancer) update() {
 		rsm[node.endpoint.Addr] = i
 	}
 	// Replace
-	b.rss, b.rsm, b.last = rss, rsm, now
+	b.rss, b.rsm = rss, rsm
 }
 
 // next
-func (b *WeightBalancer) next() (addr string) {
+func (b *WeightRoundRobinBalancer) next() (addr string) {
 	var (
 		total int
 		best  *node
@@ -148,7 +161,7 @@ func (b *WeightBalancer) next() (addr string) {
 }
 
 // node
-func (b *WeightBalancer) node(addr string) (node *node, ok bool) {
+func (b *WeightRoundRobinBalancer) node(addr string) (node *node, ok bool) {
 	if i, ok1 := b.rsm[addr]; !ok1 {
 		return nil, false
 	} else if i < len(b.rss) {

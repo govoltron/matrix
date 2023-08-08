@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"testing"
 	"time"
+
+	"github.com/govoltron/matrix/balance"
 )
 
 var (
@@ -66,6 +68,23 @@ func TestCluster(t *testing.T) {
 		return
 	}
 	defer srv.Close()
+
+	go func() {
+		time.Sleep(5 * time.Second)
+		balancer := balance.NewRoundRobinBalancer()
+		for _, endpoint := range broker.Endpoints() {
+			balancer.Add(endpoint.Addr)
+		}
+		stat := make(map[string]int)
+		for i := 0; i < 10000; i++ {
+			stat[balancer.Next()]++
+			// if i == 9000 {
+			// 	balancer.Remove("127.0.0.1:8083")
+			// }
+		}
+
+		fmt.Printf("stat: %+v\n", stat)
+	}()
 
 	reporter0 := cluster.NewReporter(ctx, "user-core-service")
 	defer reporter0.Close(ctx)
