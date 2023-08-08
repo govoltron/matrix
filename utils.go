@@ -15,6 +15,7 @@
 package matrix
 
 import (
+	"crypto/md5"
 	"crypto/sha1"
 	"encoding/hex"
 )
@@ -24,4 +25,11 @@ func genrateUniqueID(addr string) (uniqueID string) {
 	h := sha1.New()
 	h.Write([]byte(addr))
 	return hex.EncodeToString(h.Sum(nil))[0:12]
+}
+
+// md5sum
+func md5sum(raw []byte) (sign string) {
+	h := md5.New()
+	h.Write(raw)
+	return hex.EncodeToString(h.Sum(nil))
 }

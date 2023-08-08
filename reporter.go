@@ -31,7 +31,7 @@ func WithReporterTimeout(timeout time.Duration) ReporterOption {
 type Reporter struct {
 	srvbase
 	endpoint Endpoint
-	ttl      time.Duration
+	ttl      int64
 	cancelC  chan Endpoint
 	preemptC chan func()
 	reportT  *time.Ticker
@@ -112,8 +112,8 @@ func (r *Reporter) Name() string {
 }
 
 // Keepalive
-func (r *Reporter) Keepalive(addr string, weight int, ttl time.Duration) {
-	if ttl < time.Second {
+func (r *Reporter) Keepalive(addr string, weight int, ttl int64) {
+	if ttl <= 0 {
 		panic("TTL must be greater than or equal to 1 second")
 	}
 	r.mu.Lock()
@@ -121,56 +121,54 @@ func (r *Reporter) Keepalive(addr string, weight int, ttl time.Duration) {
 	// Preempt
 	r.preempt(func() {
 		// Cancel old endpoint
-		if r.endpoint.Addr != "" {
-			r.cancelC <- r.endpoint
-		}
-		if r.reportT != nil {
-			r.reportT.Stop()
-			r.reportT = nil
-			r.reportC = nil
-		}
+		r.tryCancel()
 		// Report new endpoint
-		r.ttl = ttl
-		if r.ttl <= time.Second {
-			ttl = 500 * time.Millisecond
-		} else if r.ttl <= 2*time.Second {
-			ttl = r.ttl - time.Second
+		tick := time.Duration(ttl) * time.Second
+		if ttl <= 1 {
+			tick = 500 * time.Millisecond
+		} else if ttl <= 2 {
+			tick -= time.Second
 		} else {
-			ttl = r.ttl - 2*time.Second
+			tick -= 2 * time.Second
 		}
-		r.reportT = time.NewTicker(ttl)
-		r.reportC = r.reportT.C
 		r.endpoint = Endpoint{
 			ID:     genrateUniqueID(addr),
 			Addr:   addr,
 			Weight: weight,
 		}
+		r.ttl = ttl
+		r.reportT = time.NewTicker(tick)
+		r.reportC = r.reportT.C
 		// First report
 		r.register(r.ctx, r.endpoint, r.ttl)
 	})
 }
 
+// Cancel
 func (r *Reporter) Cancel() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	// Preempt
 	r.preempt(func() {
 		// Cancel old endpoint
-		if r.endpoint.Addr != "" {
-			r.cancelC <- r.endpoint
-		}
-		if r.reportT != nil {
-			r.reportT.Stop()
-			r.reportT = nil
-			r.reportC = nil
-		}
+		r.tryCancel()
 	})
 }
 
+// tryCancel
+func (r *Reporter) tryCancel() {
+	if r.endpoint.Addr != "" {
+		r.cancelC <- r.endpoint
+	}
+	if r.reportT != nil {
+		r.reportT.Stop()
+		r.reportT = nil
+		r.reportC = nil
+	}
+}
+
 // register
-func (r *Reporter) register(ctx context.Context, endpoint Endpoint, ttl time.Duration) (err error) {
-	// Update time
-	endpoint.Time = time.Now().Unix()
+func (r *Reporter) register(ctx context.Context, endpoint Endpoint, ttl int64) (err error) {
 	value, err := endpoint.Save()
 	if err != nil {
 		return
@@ -190,7 +188,7 @@ func (r *Reporter) unregister(ctx context.Context, endpoint Endpoint) (err error
 }
 
 // Close
-func (r *Reporter) Close() {
+func (r *Reporter) Close(ctx context.Context) {
 	if !atomic.CompareAndSwapUint32(&r.closed, 0, 1) {
 		return
 	}
@@ -198,7 +196,7 @@ func (r *Reporter) Close() {
 	r.wg.Wait()
 	// Cancel endpoint
 	if r.endpoint.Addr != "" {
-		r.unregister(context.Background(), r.endpoint)
+		r.unregister(ctx, r.endpoint)
 	}
 	if r.reportT != nil {
 		r.reportT.Stop()

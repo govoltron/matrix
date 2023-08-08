@@ -23,6 +23,11 @@ import (
 	etcd "go.etcd.io/etcd/client/v3"
 )
 
+type etcdvalue struct {
+	Sign    string
+	LeaseID etcd.LeaseID
+}
+
 type EtcdStoreOption func(kvs *EtcdStore)
 
 // WithEtcdAuthentication
@@ -41,7 +46,7 @@ func WithEtcdDialTimeout(timeout time.Duration) EtcdStoreOption {
 type EtcdStore struct {
 	config *etcd.Config
 	client *etcd.Client
-	leases map[string]map[int64]etcd.LeaseID
+	values map[string]map[int64]etcdvalue
 	mu     sync.RWMutex
 }
 
@@ -52,7 +57,7 @@ func NewEtcdStore(ctx context.Context, endpoints []string, opts ...EtcdStoreOpti
 			Context:   ctx,
 			Endpoints: endpoints,
 		},
-		leases: make(map[string]map[int64]etcd.LeaseID),
+		values: make(map[string]map[int64]etcdvalue),
 	}
 	// Set options
 	for _, setOpt := range opts {
@@ -188,34 +193,38 @@ func (kvs *EtcdStore) Get(ctx context.Context, key string) (value []byte, err er
 }
 
 // Set implements KVS.
-func (kvs *EtcdStore) Set(ctx context.Context, key string, value []byte, ttl time.Duration) (err error) {
+func (kvs *EtcdStore) Set(ctx context.Context, key string, value []byte, ttl int64) (err error) {
 	var (
-		sec  int64
-		opts []etcd.OpOption
+		sign    = md5sum(value)
+		opts    []etcd.OpOption
+		leaseID etcd.LeaseID
 	)
-	if ttl > 0 {
-		sec = int64(ttl / time.Second)
-	}
-	if sec > 0 {
-		var (
-			ok      bool
-			leaseID etcd.LeaseID
-		)
-		if leaseID, ok = kvs.getLeaseID(key, sec); !ok {
-			if resp, err := kvs.client.Grant(ctx, sec); err != nil {
+
+	cache, ok := kvs.getValueCache(key, ttl)
+	if !ok {
+		if ttl > 0 {
+			if resp, err := kvs.client.Grant(ctx, ttl); err != nil {
 				return err
 			} else {
 				leaseID = resp.ID
-				kvs.setLeaseID(key, sec, resp.ID)
+				kvs.setValueCache(key, sign, ttl, resp.ID)
 			}
-		} else {
-			if _, err := kvs.client.KeepAliveOnce(ctx, leaseID); err != nil {
-				return err
-			}
+			opts = append(opts, etcd.WithLease(leaseID))
 		}
-		opts = append(opts, etcd.WithLease(leaseID))
+		_, err = kvs.client.Put(ctx, key, string(value), opts...)
+		return
+	} else if cache.Sign != sign {
+		if _, err = kvs.client.KeepAliveOnce(ctx, cache.LeaseID); err != nil {
+			return err
+		} else {
+			opts = append(opts, etcd.WithLease(cache.LeaseID))
+		}
+		_, err = kvs.client.Put(ctx, key, string(value), opts...)
+		return
 	}
-	_, err = kvs.client.Put(ctx, key, string(value), opts...)
+
+	// Keep lease
+	_, err = kvs.client.KeepAliveOnce(ctx, cache.LeaseID)
 	return
 }
 
@@ -223,41 +232,43 @@ func (kvs *EtcdStore) Set(ctx context.Context, key string, value []byte, ttl tim
 func (kvs *EtcdStore) Delete(ctx context.Context, key string) (err error) {
 	// Delete key
 	_, err = kvs.client.Delete(ctx, key)
-	// Delete leases
-	if leaseIDs, ok := kvs.leases[key]; ok {
+	// Delete value cache
+	if caches, ok := kvs.values[key]; ok {
 		kvs.mu.Lock()
 		defer func() {
-			delete(kvs.leases, key)
+			delete(kvs.values, key)
 			kvs.mu.Unlock()
 		}()
-		for sec, leaseID := range leaseIDs {
-			kvs.client.Revoke(ctx, leaseID)
-			delete(kvs.leases[key], sec)
+		for sec, cache := range caches {
+			if cache.LeaseID > 0 {
+				kvs.client.Revoke(ctx, cache.LeaseID)
+			}
+			delete(kvs.values[key], sec)
 		}
 	}
 	return
 }
 
 // getLeaseID
-func (kvs *EtcdStore) getLeaseID(key string, sec int64) (leaseID etcd.LeaseID, ok bool) {
+func (kvs *EtcdStore) getValueCache(key string, seconds int64) (cache etcdvalue, ok bool) {
 	kvs.mu.RLock()
 	defer kvs.mu.RUnlock()
-	if leaseIDs, ok1 := kvs.leases[key]; !ok1 {
-		return 0, false
+	if caches, ok1 := kvs.values[key]; !ok1 {
+		return etcdvalue{}, false
 	} else {
-		leaseID, ok = leaseIDs[sec]
+		cache, ok = caches[seconds]
 	}
 	return
 }
 
 // setLeaseID
-func (kvs *EtcdStore) setLeaseID(key string, sec int64, leaseID etcd.LeaseID) {
+func (kvs *EtcdStore) setValueCache(key, sign string, seconds int64, leaseID etcd.LeaseID) {
 	kvs.mu.Lock()
 	defer kvs.mu.Unlock()
-	if _, ok := kvs.leases[key]; !ok {
-		kvs.leases[key] = make(map[int64]etcd.LeaseID)
+	if _, ok := kvs.values[key]; !ok {
+		kvs.values[key] = make(map[int64]etcdvalue)
 	}
-	kvs.leases[key][sec] = leaseID
+	kvs.values[key][seconds] = etcdvalue{Sign: sign, LeaseID: leaseID}
 }
 
 // Close implements KVS.

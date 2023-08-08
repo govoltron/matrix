@@ -23,7 +23,6 @@ import (
 )
 
 type Endpoint struct {
-	Time   int64  `json:"time"`
 	ID     string `json:"id"`
 	Addr   string `json:"addr"`
 	Weight int    `json:"weight"`

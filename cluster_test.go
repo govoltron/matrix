@@ -68,20 +68,20 @@ func TestCluster(t *testing.T) {
 	defer srv.Close()
 
 	reporter0 := cluster.NewReporter(ctx, "user-core-service")
-	defer reporter0.Close()
-	reporter0.Keepalive("114.116.209.130:8099", 100, 2*time.Second)
+	defer reporter0.Close(ctx)
+	reporter0.Keepalive("114.116.209.130:8099", 100, 2)
 
 	reporter1 := cluster.NewReporter(ctx, "user-core-service")
-	defer reporter1.Close()
-	reporter1.Keepalive("127.0.0.1:8081", 100, 2*time.Second)
+	defer reporter1.Close(ctx)
+	reporter1.Keepalive("127.0.0.1:8081", 100, 2)
 
 	reporter2 := cluster.NewReporter(ctx, "user-core-service")
-	defer reporter2.Close()
-	reporter2.Keepalive("127.0.0.1:8082", 100, 2*time.Second)
+	defer reporter2.Close(ctx)
+	reporter2.Keepalive("127.0.0.1:8082", 100, 2)
 
 	reporter3 := cluster.NewReporter(ctx, "user-core-service")
-	defer reporter3.Close()
-	reporter3.Keepalive("127.0.0.1:8083", 1, 2*time.Second)
+	defer reporter3.Close(ctx)
+	reporter3.Keepalive("127.0.0.1:8083", 1, 2)
 
 	cluster.Setenv(ctx, "NAME", cluster.Name())
 	srv.Setenv(ctx, "options", `{"host":"open.17paipai.cn","scheme":"http"}`)

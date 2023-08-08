@@ -19,7 +19,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"time"
 )
 
 type KeyWatcher interface {
@@ -41,7 +40,7 @@ type KvStore interface {
 	Watch(ctx context.Context, key string, watcher Watcher) (err error)
 	Range(ctx context.Context, key string) (values map[string][]byte, err error)
 	Get(ctx context.Context, key string) (value []byte, err error)
-	Set(ctx context.Context, key string, value []byte, ttl time.Duration) (err error)
+	Set(ctx context.Context, key string, value []byte, ttl int64) (err error)
 	Delete(ctx context.Context, key string) (err error)
 	Close(ctx context.Context) (err error)
 }
@@ -169,7 +168,7 @@ func (c *Cluster) Get(ctx context.Context, key string) (value []byte, err error)
 }
 
 // Set
-func (c *Cluster) Set(ctx context.Context, key string, value []byte, ttl time.Duration) (err error) {
+func (c *Cluster) Set(ctx context.Context, key string, value []byte, ttl int64) (err error) {
 	return c.kvs.Set(ctx, c.buildKey(key), value, ttl)
 }
 
