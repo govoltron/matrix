@@ -16,6 +16,7 @@ package matrix
 
 import (
 	"context"
+	"fmt"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -90,10 +91,14 @@ func (r *Reporter) background() {
 			return
 		// Report
 		case <-r.reportC:
-			r.register(r.ctx, r.endpoint, r.ttl)
+			if err := r.register(r.ctx, r.endpoint, r.ttl); err != nil {
+				fmt.Printf("register failed, error is %s\n", err.Error())
+			}
 		// Cancel
 		case ep := <-r.cancelC:
-			r.unregister(r.ctx, ep)
+			if err := r.unregister(r.ctx, ep); err != nil {
+				fmt.Printf("unregister failed, error is %s\n", err.Error())
+			}
 		// Preempt
 		case preempt := <-r.preemptC:
 			preempt()
